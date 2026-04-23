@@ -214,7 +214,7 @@ impl OperatorTypes {
         ("|=", Self::BitOrAssignment),
     ];
 
-    fn precedence(&self) -> u8 {
+    pub fn precedence(&self) -> u8 {
         return match self {
             Self::Or => 1,
             Self::And => 2,
@@ -323,8 +323,8 @@ impl Lexer {
             match char {
                 ';' => push_and_skip(TokenTypes::Semicolon),
                 ',' => push_and_skip(TokenTypes::Comma),
-                '{' => push_and_skip(TokenTypes::RCurlyBrace),
-                '}' => push_and_skip(TokenTypes::LCurlyBrace),
+                '{' => push_and_skip(TokenTypes::LCurlyBrace),
+                '}' => push_and_skip(TokenTypes::RCurlyBrace),
 
                 '\"' => {
                     lexer
@@ -420,12 +420,12 @@ impl Lexer {
     fn parse_number_literal(chars: &mut Peekable<Chars<'_>>) -> Result<TokenTypes, ()> {
         let mut final_string = String::from("");
 
-        for char in chars {
+        while let Some(&char) = chars.peek() {
             if char == ' ' || char.is_ascii_punctuation() {
                 break;
             }
 
-            final_string += &char.to_string();
+            final_string += &chars.next().unwrap().to_string();
         }
 
         enum PrefixTypes {
@@ -505,6 +505,16 @@ impl Lexer {
         }
 
         Some(self.tokens[self.curr_index].clone())
+    }
+
+    pub fn next(&mut self) -> Option<TokenTypes> {
+        let next_token = self.peek();
+
+        if next_token.is_some() {
+            self.advance();
+        }
+
+        return next_token;
     }
 
     pub fn advance(&mut self) {
