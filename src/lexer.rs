@@ -116,6 +116,37 @@ impl Display for KeywordTypes {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AssignmentTypes {
+    SimpleAssignment,
+    AddAssignment,
+    SubAssignment,
+    MultiAssignment,
+    DivisionAssignment,
+    ModulusAssignment,
+    LShiftAssignment,
+    RShiftAssignment,
+    BitAndAssignment,
+    BitXORAssignment,
+    BitOrAssignment,
+}
+
+impl AssignmentTypes {
+    const MAPPINGS: &'static [(&'static str, Self); 11] = &[
+        ("=", Self::SimpleAssignment),
+        ("+=", Self::AddAssignment),
+        ("-=", Self::SubAssignment),
+        ("*=", Self::MultiAssignment),
+        ("/=", Self::DivisionAssignment),
+        ("%=", Self::ModulusAssignment),
+        ("<<=", Self::LShiftAssignment),
+        (">>=", Self::RShiftAssignment),
+        ("&=", Self::BitAndAssignment),
+        ("^=", Self::BitXORAssignment),
+        ("|=", Self::BitOrAssignment),
+    ];
+}
+
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum OperatorTypes {
     #[default]
@@ -155,23 +186,10 @@ pub enum OperatorTypes {
     // prefix operators
     BitNot,
     Not,
-
-    // assignment
-    SimpleAssignment,
-    AddAssignment,
-    SubAssignment,
-    MultiAssignment,
-    DivisionAssignment,
-    ModulusAssignment,
-    LShiftAssignment,
-    RShiftAssignment,
-    BitAndAssignment,
-    BitXORAssignment,
-    BitOrAssignment,
 }
 
 impl OperatorTypes {
-    const MAPPINGS: &'static [(&'static str, Self); 40] = &[
+    const MAPPINGS: &'static [(&'static str, Self); 29] = &[
         ("(UNKNOWN)", Self::NoOperator),
         ("*", Self::Star),
         ("/", Self::Divide),
@@ -201,17 +219,6 @@ impl OperatorTypes {
         ("--", Self::Dec),
         ("~", Self::BitNot),
         ("!", Self::Not),
-        ("=", Self::SimpleAssignment),
-        ("+=", Self::AddAssignment),
-        ("-=", Self::SubAssignment),
-        ("*=", Self::MultiAssignment),
-        ("/=", Self::DivisionAssignment),
-        ("%=", Self::ModulusAssignment),
-        ("<<=", Self::LShiftAssignment),
-        (">>=", Self::RShiftAssignment),
-        ("&=", Self::BitAndAssignment),
-        ("^=", Self::BitXORAssignment),
-        ("|=", Self::BitOrAssignment),
     ];
 
     pub fn precedence(&self) -> u8 {
