@@ -1,5 +1,5 @@
-use crate::parser::Node;
-use crate::{lexer::Lexer, parser::parse_expression};
+use crate::lexer::lexer::Lexer;
+use crate::parser::parser::parse_expression;
 
 mod lexer;
 mod parser;

@@ -5,304 +5,22 @@ use std::{
     str::{Chars, FromStr},
 };
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum KeywordTypes {
-    Auto,
-    Break,
-    Case,
-    Char,
-    Const,
-    Continue,
-    Default,
-    Do,
-    Double,
-    Else,
-    Enum,
-    Extern,
-    Float,
-    For,
-    Goto,
-    If,
-    Int,
-    Long,
-    Register,
-    Return,
-    Short,
-    Signed,
-    Sizeof,
-    Static,
-    Struct,
-    Switch,
-    Typedef,
-    Union,
-    Unsigned,
-    Void,
-    Volatile,
-    While,
-    _Bool,
-    _Complex,
-    _Imaginary,
-    Inline,
-    Restrict,
-}
+use crate::lexer::language_features::{AssignmentTypes, KeywordTypes, LiteralTypes, OperatorTypes};
 
-impl KeywordTypes {
-    const MAPPINGS: &'static [(&'static str, Self); 37] = &[
-        ("auto", Self::Auto),
-        ("break", Self::Break),
-        ("case", Self::Case),
-        ("char", Self::Char),
-        ("const", Self::Const),
-        ("continue", Self::Continue),
-        ("default", Self::Default),
-        ("do", Self::Do),
-        ("double", Self::Double),
-        ("else", Self::Else),
-        ("enum", Self::Enum),
-        ("extern", Self::Extern),
-        ("float", Self::Float),
-        ("for", Self::For),
-        ("goto", Self::Goto),
-        ("if", Self::If),
-        ("int", Self::Int),
-        ("long", Self::Long),
-        ("register", Self::Register),
-        ("return", Self::Return),
-        ("short", Self::Short),
-        ("signed", Self::Signed),
-        ("sizeof", Self::Sizeof),
-        ("static", Self::Static),
-        ("struct", Self::Struct),
-        ("switch", Self::Switch),
-        ("typedef", Self::Typedef),
-        ("union", Self::Union),
-        ("unsigned", Self::Unsigned),
-        ("void", Self::Void),
-        ("volatile", Self::Volatile),
-        ("while", Self::While),
-        ("_Bool", Self::_Bool),
-        ("_Complex", Self::_Complex),
-        ("_Imaginary", Self::_Imaginary),
-        ("inline", Self::Inline),
-        ("Restrict", Self::Restrict),
-    ];
-}
-
-impl FromStr for KeywordTypes {
-    type Err = String;
-
-    fn from_str(input_str: &str) -> Result<Self, Self::Err> {
-        let found_value = Self::MAPPINGS
-            .iter()
-            .find(|(x, _)| *x == input_str)
-            .map(|(_, x)| x);
-
-        match found_value {
-            Some(x) => return Ok(*x),
-            None => Err("Given String is not a valid operator".to_string()),
-        }
-    }
-}
-
-impl Display for KeywordTypes {
-    fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let found_value = Self::MAPPINGS
-            .iter()
-            .find(|(_, x)| x == self)
-            .map(|(x, _)| x)
-            .unwrap();
-
-        write!(display, "{found_value}")
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum AssignmentTypes {
-    SimpleAssignment,
-    AddAssignment,
-    SubAssignment,
-    MultiAssignment,
-    DivisionAssignment,
-    ModulusAssignment,
-    LShiftAssignment,
-    RShiftAssignment,
-    BitAndAssignment,
-    BitXORAssignment,
-    BitOrAssignment,
-}
-
-impl AssignmentTypes {
-    const MAPPINGS: &'static [(&'static str, Self); 11] = &[
-        ("=", Self::SimpleAssignment),
-        ("+=", Self::AddAssignment),
-        ("-=", Self::SubAssignment),
-        ("*=", Self::MultiAssignment),
-        ("/=", Self::DivisionAssignment),
-        ("%=", Self::ModulusAssignment),
-        ("<<=", Self::LShiftAssignment),
-        (">>=", Self::RShiftAssignment),
-        ("&=", Self::BitAndAssignment),
-        ("^=", Self::BitXORAssignment),
-        ("|=", Self::BitOrAssignment),
-    ];
-}
-
-#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
-pub enum OperatorTypes {
-    #[default]
-    NoOperator,
-    // regular expression operators
-    Divide,
-    Modulus,
-    BitLShift,
-    BitRShift,
-    Less,
-    LessOrEq,
-    Greater,
-    GreaterOrEq,
-    Equal,
-    NotEqual,
-    BitXOR,
-    BitOr,
-    And,
-    Or,
-
-    // ambiguious operators
-    Inc,        // ++ can be prefix or postfix
-    Dec,        // same here
-    Plus,       // can be a positive number or two numbers added
-    Minus,      // same
-    Star,       // can be a multiply or a dereference
-    Amperstand, // can be a bitwise and or a address
-
-    // post fix operators
-    LParen,
-    RParen,
-    LSquareBracket,
-    RSquareBracket,
-    DotOperator,
-    ArrowOperator,
-
-    // prefix operators
-    BitNot,
-    Not,
-}
-
-impl OperatorTypes {
-    const MAPPINGS: &'static [(&'static str, Self); 29] = &[
-        ("(UNKNOWN)", Self::NoOperator),
-        ("*", Self::Star),
-        ("/", Self::Divide),
-        ("%", Self::Modulus),
-        ("+", Self::Plus),
-        ("-", Self::Minus),
-        ("<<", Self::BitLShift),
-        (">>", Self::BitRShift),
-        ("<", Self::Less),
-        ("<=", Self::LessOrEq),
-        (">", Self::Greater),
-        (">=", Self::GreaterOrEq),
-        ("==", Self::Equal),
-        ("!=", Self::NotEqual),
-        ("&", Self::Amperstand),
-        ("^", Self::BitXOR),
-        ("|", Self::BitOr),
-        ("&&", Self::And),
-        ("||", Self::Or),
-        ("(", Self::LParen),
-        (")", Self::RParen),
-        ("[", Self::LSquareBracket),
-        ("]", Self::RSquareBracket),
-        (".", Self::DotOperator),
-        ("->", Self::ArrowOperator),
-        ("++", Self::Inc),
-        ("--", Self::Dec),
-        ("~", Self::BitNot),
-        ("!", Self::Not),
-    ];
-
-    pub fn precedence(&self) -> u8 {
-        return match self {
-            Self::Or => 1,
-            Self::And => 2,
-            Self::BitOr => 3,
-            Self::BitXOR => 4,
-            Self::Amperstand => 5, // BitAnd
-            Self::Equal | Self::NotEqual => 6,
-            Self::Greater | Self::GreaterOrEq | Self::Less | Self::LessOrEq => 7,
-            Self::BitLShift | Self::BitRShift => 8,
-            Self::Plus | Self::Minus => 9,
-            Self::Star | Self::Divide | Self::Modulus => 10,
-            _ => 0,
-        };
-    }
-}
-
-impl FromStr for OperatorTypes {
-    type Err = String;
-
-    fn from_str(input_str: &str) -> Result<Self, Self::Err> {
-        let found_value = Self::MAPPINGS
-            .iter()
-            .find(|(x, _)| *x == input_str)
-            .map(|(_, x)| x);
-
-        match found_value {
-            Some(x) => return Ok(*x),
-            None => Err("Given String is not a valid operator".to_string()),
-        }
-    }
-}
-
-impl Display for OperatorTypes {
-    fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let found_value = Self::MAPPINGS
-            .iter()
-            .find(|(_, x)| x == self)
-            .map(|(x, _)| x)
-            .unwrap();
-
-        write!(display, "{found_value}")
-    }
-}
-
-#[derive(Clone, PartialEq, Eq)]
-pub enum LiteralTypes {
-    Float(i64, u32), // integer and shift
-    Integer(u64),
-    String(String),
-    Character(char),
-}
-
-impl Display for LiteralTypes {
-    fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let output;
-
-        match self {
-            Self::Integer(x) => output = x.to_string(),
-            Self::String(x) => output = x.to_string(),
-            Self::Character(x) => output = x.to_string(),
-
-            Self::Float(base, exponent) => output = base.pow(*exponent).to_string(),
-        }
-
-        write!(display, "{output}")
-    }
-}
-
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Default, Clone, PartialEq, Eq)]
 pub enum TokenTypes {
+    #[default]
+    NoToken,
     Identifier(String),
     Literal(LiteralTypes),
     Keyword(KeywordTypes),
     Operator(OperatorTypes),
+    Assignment(AssignmentTypes),
     LCurlyBrace,
     RCurlyBrace,
     Comma,
     Semicolon,
 }
-
-// impl TokenTypes {}
 
 #[derive(Default)]
 pub struct Lexer {
@@ -348,7 +66,7 @@ impl Lexer {
                         .push(Self::parse_number_literal(chars).unwrap());
                 }
                 c if c.is_ascii_punctuation() && c != ';' && c != '_' => {
-                    lexer.tokens.push(Self::parse_operator(chars));
+                    lexer.tokens.push(Self::parse_symbol(chars));
                 }
                 _ => {
                     chars.next();
@@ -359,9 +77,9 @@ impl Lexer {
         lexer
     }
 
-    fn parse_operator(chars: &mut Peekable<Chars<'_>>) -> TokenTypes {
+    fn parse_symbol(chars: &mut Peekable<Chars<'_>>) -> TokenTypes {
         let mut final_string = String::from("");
-        let mut final_operator = OperatorTypes::NoOperator;
+        let mut final_type = TokenTypes::NoToken;
 
         while let Some(&char) = chars.peek() {
             final_string += &char.to_string();
@@ -370,16 +88,25 @@ impl Lexer {
             // meaning that all multi char operators have a previous char that is in another operator
             // this means the operator is finished when its newest version stops being valid
             let try_as_operator = OperatorTypes::from_str(&final_string);
+            let try_as_assignment = AssignmentTypes::from_str(&final_string);
 
-            if try_as_operator.is_err() || char == ' ' || char == ';' {
+            if (try_as_operator.is_err() && try_as_assignment.is_err())
+                || char == ' '
+                || char == ';'
+            {
                 break;
             }
 
             chars.next();
-            final_operator = try_as_operator.unwrap();
+
+            if try_as_operator.is_ok() {
+                final_type = TokenTypes::Operator(try_as_operator.unwrap());
+            } else {
+                final_type = TokenTypes::Assignment(try_as_assignment.unwrap());
+            }
         }
 
-        return TokenTypes::Operator(final_operator);
+        return final_type;
     }
 
     fn parse_string_literal(chars: &mut Peekable<Chars<'_>>) -> Result<TokenTypes, ()> {
@@ -545,6 +272,7 @@ impl Display for Lexer {
             match token {
                 TokenTypes::Identifier(x) => add_token("IDENTIFIER", x),
                 TokenTypes::Operator(x) => add_token("OPERATOR", &x.to_string()),
+                TokenTypes::Assignment(x) => add_token("ASSIGNMENT", &x.to_string()),
                 TokenTypes::Keyword(x) => add_token("KEYWORD", &x.to_string()),
 
                 TokenTypes::Literal(literal_type) => match literal_type {
@@ -559,6 +287,7 @@ impl Display for Lexer {
                 TokenTypes::LCurlyBrace => add_token("LCURLYBRACE", "{"),
                 TokenTypes::RCurlyBrace => add_token("RCURLYBRACE", "}"),
                 TokenTypes::Comma => add_token("COMMA", ","),
+                TokenTypes::NoToken => add_token("(NO TOKEN)", "<WARNING NO TOKEN> "),
             }
         }
 

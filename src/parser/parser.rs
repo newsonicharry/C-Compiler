@@ -1,4 +1,6 @@
-use crate::lexer::{Lexer, LiteralTypes, OperatorTypes, TokenTypes};
+use crate::lexer::language_features::{LiteralTypes, OperatorTypes};
+use crate::lexer::lexer::{Lexer, TokenTypes};
+
 use std::fmt::Display;
 
 pub enum Node {
