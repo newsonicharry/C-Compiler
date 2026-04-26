@@ -1,5 +1,5 @@
 use crate::lexer::lexer::Lexer;
-use crate::parser::parser::parse_expression;
+use crate::parser::parser::{parse_expression, parse_unary};
 
 mod lexer;
 mod parser;
@@ -20,12 +20,13 @@ mod parser;
 
 // "#;
 
-const EXPRESSION: &str = "2 * 10 + 12 / num";
+const EXPRESSION: &str = "*nums[10] + 10";
 
 fn main() {
     let mut lexer = Lexer::new(EXPRESSION);
     println!("{lexer}");
 
     let nodes = parse_expression(&mut lexer, 0);
-    println!("{}", nodes);
+    // let nodes = parse_unary(&mut lexer);
+    println!("{}", nodes)
 }

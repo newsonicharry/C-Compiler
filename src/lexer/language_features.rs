@@ -192,7 +192,7 @@ pub enum OperatorTypes {
     DotOperator,
     ArrowOperator,
 
-    // prefix operators
+    // unary operators
     BitNot,
     Not,
 }
@@ -230,8 +230,37 @@ impl OperatorTypes {
         ("!", Self::Not),
     ];
 
+    pub fn potential_unary(&self) -> bool {
+        match self {
+            Self::Inc
+            | Self::Dec
+            | Self::Plus
+            | Self::Minus
+            | Self::Star
+            | Self::Amperstand
+            | Self::BitNot
+            | Self::Not => true,
+
+            _ => false,
+        }
+    }
+
+    pub fn potential_postfix(&self) -> bool {
+        match self {
+            Self::LParen
+            | Self::RParen
+            | Self::LSquareBracket
+            | Self::RSquareBracket
+            | Self::DotOperator
+            | Self::ArrowOperator
+            | Self::Inc
+            | Self::Dec => return true,
+            _ => return false,
+        }
+    }
+
     pub fn precedence(&self) -> u8 {
-        return match self {
+        match self {
             Self::Or => 1,
             Self::And => 2,
             Self::BitOr => 3,
@@ -243,7 +272,7 @@ impl OperatorTypes {
             Self::Plus | Self::Minus => 9,
             Self::Star | Self::Divide | Self::Modulus => 10,
             _ => 0,
-        };
+        }
     }
 }
 

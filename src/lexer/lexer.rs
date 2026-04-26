@@ -25,7 +25,8 @@ pub enum TokenTypes {
 #[derive(Default)]
 pub struct Lexer {
     tokens: Vec<TokenTypes>,
-    curr_index: usize,
+
+    pub curr_index: usize,
 }
 
 impl Lexer {
@@ -239,6 +240,10 @@ impl Lexer {
         }
 
         Some(self.tokens[self.curr_index].clone())
+    }
+
+    pub fn cant_peek(&self) -> bool {
+        self.curr_index < self.tokens.len()
     }
 
     pub fn next(&mut self) -> Option<TokenTypes> {
