@@ -5,15 +5,18 @@ use std::{
     str::{Chars, FromStr},
 };
 
-use crate::lexer::language_features::{AssignmentTypes, KeywordTypes, LiteralTypes, OperatorTypes};
+use crate::lexer::language_features::{
+    AssignmentTypes, DataTypes, KeywordTypes, LiteralTypes, OperatorTypes,
+};
 
-#[derive(Default, Clone, PartialEq, Eq)]
+#[derive(Default, Clone, PartialEq, Eq, Debug)]
 pub enum TokenTypes {
     #[default]
     NoToken,
     Identifier(String),
     Literal(LiteralTypes),
     Keyword(KeywordTypes),
+    DataType(DataTypes),
     Operator(OperatorTypes),
     Assignment(AssignmentTypes),
     LCurlyBrace,
@@ -144,9 +147,14 @@ impl Lexer {
         }
 
         let try_as_keyword = KeywordTypes::from_str(&final_string);
+        let try_as_datatype = DataTypes::from_str(&final_string);
 
         if let Ok(keyword) = try_as_keyword {
             return TokenTypes::Keyword(keyword);
+        }
+
+        if let Ok(data_type) = try_as_datatype {
+            return TokenTypes::DataType(data_type);
         }
 
         return TokenTypes::Identifier(final_string);
@@ -225,13 +233,27 @@ impl Lexer {
         return false;
     }
 
-    pub fn expect(&mut self, token: TokenTypes) -> Result<(), ()> {
-        if self.is_same_variant(&token) {
-            self.advance();
-            return Ok(());
-        }
+    pub fn check<F>(&mut self, enum_match: F) -> Result<(), String>
+    where
+        F: Fn(&TokenTypes) -> bool,
+    {
+        enum_match(
+            &self
+                .peek()
+                .ok_or(String::from("Expected another token, got nothing"))?,
+        )
+        .then_some(())
+        .ok_or(String::from(format!("Unexpected token {:?}", &self.peek())))
+    }
 
-        Err(())
+    pub fn expect<F>(&mut self, enum_match: F) -> Result<(), String>
+    where
+        F: Fn(&TokenTypes) -> bool,
+    {
+        self.check(enum_match).and_then(|_| {
+            self.advance();
+            Ok(())
+        })
     }
 
     pub fn peek(&self) -> Option<TokenTypes> {
@@ -242,22 +264,25 @@ impl Lexer {
         Some(self.tokens[self.curr_index].clone())
     }
 
-    pub fn cant_peek(&self) -> bool {
-        self.curr_index < self.tokens.len()
-    }
+    pub fn forward_peek(&self) -> Option<TokenTypes> {
+        let new_index = self.curr_index + 1;
 
-    pub fn next(&mut self) -> Option<TokenTypes> {
-        let next_token = self.peek();
-
-        if next_token.is_some() {
-            self.advance();
+        if new_index >= self.tokens.len() {
+            return None;
         }
 
-        return next_token;
+        Some(self.tokens[new_index].clone())
     }
 
     pub fn advance(&mut self) {
         self.curr_index += 1;
+    }
+
+    pub fn next(&mut self) -> Option<TokenTypes> {
+        self.peek().and_then(|token_type| {
+            self.advance();
+            Some(token_type)
+        })
     }
 
     pub fn get_tokens(&self) -> &Vec<TokenTypes> {
@@ -279,6 +304,7 @@ impl Display for Lexer {
                 TokenTypes::Operator(x) => add_token("OPERATOR", &x.to_string()),
                 TokenTypes::Assignment(x) => add_token("ASSIGNMENT", &x.to_string()),
                 TokenTypes::Keyword(x) => add_token("KEYWORD", &x.to_string()),
+                TokenTypes::DataType(x) => add_token("DATATYPE", &x.to_string()),
 
                 TokenTypes::Literal(literal_type) => match literal_type {
                     LiteralTypes::String(x) => add_token("STRING", &x.to_string()),

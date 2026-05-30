@@ -36,91 +36,121 @@ macro_rules! impl_display_for_enum {
     };
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum KeywordTypes {
-    Auto,
     Break,
     Case,
-    Char,
-    Const,
     Continue,
     Default,
     Do,
-    Double,
     Else,
     Enum,
     Extern,
-    Float,
     For,
     Goto,
     If,
-    Int,
-    Long,
     Register,
     Return,
-    Short,
-    Signed,
     Sizeof,
     Static,
     Struct,
     Switch,
     Typedef,
     Union,
-    Unsigned,
-    Void,
-    Volatile,
     While,
-    _Bool,
     _Complex,
     _Imaginary,
     Inline,
-    Restrict,
 }
 
 impl KeywordTypes {
-    const MAPPINGS: &'static [(&'static str, Self); 37] = &[
-        ("auto", Self::Auto),
+    const MAPPINGS: &'static [(&'static str, Self); 23] = &[
         ("break", Self::Break),
         ("case", Self::Case),
-        ("char", Self::Char),
-        ("const", Self::Const),
         ("continue", Self::Continue),
         ("default", Self::Default),
         ("do", Self::Do),
-        ("double", Self::Double),
         ("else", Self::Else),
         ("enum", Self::Enum),
         ("extern", Self::Extern),
-        ("float", Self::Float),
         ("for", Self::For),
         ("goto", Self::Goto),
         ("if", Self::If),
-        ("int", Self::Int),
-        ("long", Self::Long),
         ("register", Self::Register),
         ("return", Self::Return),
-        ("short", Self::Short),
-        ("signed", Self::Signed),
         ("sizeof", Self::Sizeof),
         ("static", Self::Static),
         ("struct", Self::Struct),
         ("switch", Self::Switch),
         ("typedef", Self::Typedef),
         ("union", Self::Union),
-        ("unsigned", Self::Unsigned),
-        ("void", Self::Void),
-        ("volatile", Self::Volatile),
         ("while", Self::While),
-        ("_Bool", Self::_Bool),
         ("_Complex", Self::_Complex),
         ("_Imaginary", Self::_Imaginary),
         ("inline", Self::Inline),
-        ("Restrict", Self::Restrict),
     ];
 }
 
 impl_from_str_for_enum!(KeywordTypes);
 impl_display_for_enum!(KeywordTypes);
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum DataTypes {
+    #[default]
+    NoType,
+    Auto,
+    Char,
+    Const,
+    Double,
+    Float,
+    Int,
+    Long,
+    Short,
+    Signed,
+    Unsigned,
+    Restrict,
+    Void,
+    Volatile,
+    _Bool,
+}
+
+impl DataTypes {
+    const MAPPINGS: &'static [(&'static str, Self); 15] = &[
+        ("NOTYPE", Self::NoType),
+        ("auto", Self::Auto),
+        ("char", Self::Char),
+        ("const", Self::Const),
+        ("double", Self::Double),
+        ("float", Self::Float),
+        ("int", Self::Int),
+        ("long", Self::Long),
+        ("short", Self::Short),
+        ("signed", Self::Signed),
+        ("unsigned", Self::Unsigned),
+        ("restrict", Self::Restrict),
+        ("void", Self::Void),
+        ("volatile", Self::Volatile),
+        ("_Bool", Self::_Bool),
+    ];
+
+    pub fn is_qualifier(&self) -> bool {
+        match *self {
+            // auto is not technically a qualifier but we assume it is here
+            Self::Const | Self::Volatile | Self::Restrict | Self::Auto => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_modifier(&self) -> bool {
+        match *self {
+            Self::Signed | Self::Unsigned | Self::Short | Self::Long => true,
+            _ => false,
+        }
+    }
+}
+
+impl_from_str_for_enum!(DataTypes);
+impl_display_for_enum!(DataTypes);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AssignmentTypes {
@@ -279,7 +309,7 @@ impl OperatorTypes {
 impl_from_str_for_enum!(OperatorTypes);
 impl_display_for_enum!(OperatorTypes);
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum LiteralTypes {
     Float(i64, u32), // integer and shift
     Integer(u64),

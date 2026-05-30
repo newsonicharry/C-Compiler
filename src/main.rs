@@ -1,32 +1,13 @@
-use crate::lexer::lexer::Lexer;
-use crate::parser::parser::{parse_expression, parse_unary};
+use crate::{lexer::lexer::Lexer, parser::type_parser::parse_type};
 
 mod lexer;
 mod parser;
 
-// const EXPRESSION: &str = r#"
-
-// int main() {
-//     int num1, num2, sum;
-
-//     printf("Enter two integers:");
-//     scanf("%d %d", &num1, &num2);
-
-//     sum = num1 + num2;
-//     printf("Sum: %d\n" , sum);
-
-//     return 0;
-// }
-
-// "#;
-
-const EXPRESSION: &str = "*nums[10] + 10";
+const EXPRESSION: &str = "const char * const (*(*complex_func)(int, void (*)(int)))(double);";
 
 fn main() {
     let mut lexer = Lexer::new(EXPRESSION);
-    println!("{lexer}");
+    let final_type = parse_type(&mut lexer).unwrap();
 
-    let nodes = parse_expression(&mut lexer, 0);
-    // let nodes = parse_unary(&mut lexer);
-    println!("{}", nodes)
+    println!("{}", final_type);
 }
