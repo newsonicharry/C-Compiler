@@ -1,6 +1,6 @@
+use crate::lexer::language_features::LiteralTypes;
 use crate::lexer::language_features::OperatorTypes;
 use crate::lexer::lexer::{Lexer, TokenTypes};
-use crate::parser::parser::parse_primary;
 use std::fmt::Display;
 
 #[derive(Clone, Debug)]
@@ -28,11 +28,11 @@ pub enum ExprNode {
     },
 
     PostInc,
-    PostDec,
-    FunctionCall {
-        identifier: String,
-        // args: Vec<ExprNode>,
-    },
+    // PostDec,
+    // FunctionCall {
+    //     identifier: String,
+    //     // args: Vec<ExprNode>,
+    // },
     Accessor {
         expr: Box<ExprNode>,
     },
@@ -193,4 +193,31 @@ pub fn parse_expression(lexer: &mut Lexer, min_precedence: u8) -> ExprNode {
     }
 
     left
+}
+
+fn parse_primary(lexer: &mut Lexer) -> Result<ExprNode, String> {
+    if let Some(token_type) = lexer.peek() {
+        match token_type {
+            TokenTypes::Literal(literal_type) => match literal_type {
+                LiteralTypes::Integer(x) => {
+                    lexer.advance();
+                    return Ok(ExprNode::Number { num: x });
+                }
+                _ => todo!(),
+            },
+
+            TokenTypes::Identifier(_) => return parse_postfix(lexer),
+            TokenTypes::Operator(_) => return parse_unary(lexer),
+
+            _ => todo!(),
+        }
+    }
+
+    if lexer.peek().is_none() {
+        return Err(String::from("Expected another token, got nothing"));
+    }
+
+    Err(String::from(
+        "Next token must be a literal, operator or identifier",
+    ))
 }

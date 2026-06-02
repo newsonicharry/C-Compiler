@@ -29,6 +29,7 @@ pub enum TokenTypes {
 pub struct Lexer {
     tokens: Vec<TokenTypes>,
 
+    set_index: usize,
     pub curr_index: usize,
 }
 
@@ -223,37 +224,42 @@ impl Lexer {
         }
     }
 
-    pub fn is_same_variant(&self, token: &TokenTypes) -> bool {
-        let curr_token = self.peek();
-
-        if let Some(unwrapped_token) = curr_token {
-            return mem::discriminant(&unwrapped_token) == mem::discriminant(token);
-        }
-
-        return false;
-    }
-
-    pub fn check<F>(&mut self, enum_match: F) -> Result<(), String>
+    pub fn check<F>(&mut self, enum_match: F) -> Result<TokenTypes, String>
     where
         F: Fn(&TokenTypes) -> bool,
     {
-        enum_match(
-            &self
-                .peek()
-                .ok_or(String::from("Expected another token, got nothing"))?,
-        )
-        .then_some(())
-        .ok_or(String::from(format!("Unexpected token {:?}", &self.peek())))
+        let Some(token) = self.peek() else {
+            return Err(String::from("Expected another token, got nothing"));
+        };
+
+        enum_match(&token)
+            .then_some(self.peek().unwrap())
+            .ok_or(String::from(format!("Unexpected token {:?}", token)))
     }
 
-    pub fn expect<F>(&mut self, enum_match: F) -> Result<(), String>
+    pub fn expect<F>(&mut self, enum_match: F) -> Result<TokenTypes, String>
     where
         F: Fn(&TokenTypes) -> bool,
     {
-        self.check(enum_match).and_then(|_| {
-            self.advance();
-            Ok(())
-        })
+        let result = self.check(enum_match);
+        self.advance();
+        result
+    }
+
+    pub fn expect_extract<F, T>(&mut self, enum_match: F) -> Result<T, String>
+    where
+        F: Fn(TokenTypes) -> Option<T>,
+    {
+        let Some(token) = self.peek() else {
+            return Err(String::from("Expected another token, got nothing"));
+        };
+
+        enum_match(token)
+            .and_then(|x| {
+                self.advance();
+                Some(x)
+            })
+            .ok_or(String::from(format!("Unexpected token {:?}", self.peek())))
     }
 
     pub fn peek(&self) -> Option<TokenTypes> {
@@ -262,6 +268,18 @@ impl Lexer {
         }
 
         Some(self.tokens[self.curr_index].clone())
+    }
+
+    pub fn set_flag(&mut self) {
+        self.set_index = self.curr_index;
+    }
+
+    pub fn recede_to_flag(&mut self) {
+        self.curr_index = self.set_index;
+    }
+
+    pub fn recede(&mut self) {
+        self.curr_index -= 1;
     }
 
     pub fn forward_peek(&self) -> Option<TokenTypes> {

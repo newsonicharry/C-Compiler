@@ -29,41 +29,39 @@ impl Display for SimpleType {
 }
 
 #[derive(Clone, Debug)]
-pub enum DataTypeBlock {
+pub enum TypeNode {
     Empty,
 
     Variable {
         name: String,
-        held_value: Box<DataTypeBlock>,
+        held_value: Box<TypeNode>,
     },
 
     Normal {
         held_type: SimpleType,
-        held_value: Box<DataTypeBlock>,
+        held_value: Box<TypeNode>,
     },
 
     Pointer {
         qualifiers: Vec<DataTypes>,
-        function_parameters: Vec<DataTypeBlock>,
-        held_value: Box<DataTypeBlock>,
+        function_parameters: Vec<TypeNode>,
+        held_value: Box<TypeNode>,
     },
 
     Array {
         expr: ExprNode,
-        held_value: Box<DataTypeBlock>,
+        held_value: Box<TypeNode>,
     },
 }
 
-impl DataTypeBlock {
+impl TypeNode {
     // gotta love the rust borrow checker making me write this
-    pub fn get_most_nested_layer(&mut self) -> &mut DataTypeBlock {
+    pub fn get_most_nested_layer(&mut self) -> &mut TypeNode {
         let should_recurse = match self {
-            DataTypeBlock::Variable { held_value, .. }
-            | DataTypeBlock::Normal { held_value, .. }
-            | DataTypeBlock::Pointer { held_value, .. }
-            | DataTypeBlock::Array { held_value, .. } => {
-                !matches!(held_value.as_ref(), DataTypeBlock::Empty)
-            }
+            TypeNode::Variable { held_value, .. }
+            | TypeNode::Normal { held_value, .. }
+            | TypeNode::Pointer { held_value, .. }
+            | TypeNode::Array { held_value, .. } => !matches!(held_value.as_ref(), TypeNode::Empty),
             _ => false,
         };
 
@@ -72,15 +70,15 @@ impl DataTypeBlock {
         }
 
         match self {
-            DataTypeBlock::Variable { held_value, .. }
-            | DataTypeBlock::Normal { held_value, .. }
-            | DataTypeBlock::Pointer { held_value, .. }
-            | DataTypeBlock::Array { held_value, .. } => held_value.get_most_nested_layer(),
+            TypeNode::Variable { held_value, .. }
+            | TypeNode::Normal { held_value, .. }
+            | TypeNode::Pointer { held_value, .. }
+            | TypeNode::Array { held_value, .. } => held_value.get_most_nested_layer(),
             _ => unreachable!(),
         }
     }
 
-    pub fn set_most_nested_held_value(&mut self, nested_value: &DataTypeBlock) {
+    pub fn set_most_nested_held_value(&mut self, nested_value: &TypeNode) {
         match self {
             Self::Variable { held_value, .. }
             | Self::Normal { held_value, .. }
@@ -96,8 +94,8 @@ impl DataTypeBlock {
     fn write_pointer_data_for_display(
         output: &mut String,
         qualifiers: &Vec<DataTypes>,
-        held_value: &Box<DataTypeBlock>,
-        function_parameters: &Vec<DataTypeBlock>,
+        held_value: &Box<TypeNode>,
+        function_parameters: &Vec<TypeNode>,
     ) {
         match function_parameters.is_empty() {
             true => {
@@ -123,17 +121,17 @@ impl DataTypeBlock {
         output.push_str(&format!("{})", Self::display(held_value)));
     }
 
-    fn display(node: &DataTypeBlock) -> String {
+    fn display(node: &TypeNode) -> String {
         let mut output = String::new();
 
         match node {
-            DataTypeBlock::Variable { name, held_value } => {
+            TypeNode::Variable { name, held_value } => {
                 if !name.is_empty() {
                     output.push_str(&format!("(Var {} {})", name, Self::display(held_value)));
                 }
             }
 
-            DataTypeBlock::Array { expr, held_value } => {
+            TypeNode::Array { expr, held_value } => {
                 output.push_str(&format!(
                     "(Arr {} {})",
                     expr.to_string()
@@ -144,7 +142,7 @@ impl DataTypeBlock {
                 ));
             }
 
-            DataTypeBlock::Pointer {
+            TypeNode::Pointer {
                 qualifiers,
                 held_value,
                 function_parameters,
@@ -157,7 +155,7 @@ impl DataTypeBlock {
                 );
             }
 
-            DataTypeBlock::Normal {
+            TypeNode::Normal {
                 held_value,
                 held_type,
             } => {
@@ -174,14 +172,14 @@ impl DataTypeBlock {
                 output.push_str(")");
             }
 
-            DataTypeBlock::Empty => {}
+            TypeNode::Empty => {}
         }
 
         output
     }
 }
 
-impl Display for DataTypeBlock {
+impl Display for TypeNode {
     fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let final_str = Self::display(self);
 
@@ -189,9 +187,9 @@ impl Display for DataTypeBlock {
     }
 }
 
-pub fn parse_type(lexer: &mut Lexer) -> Result<DataTypeBlock, String> {
+pub fn parse_type(lexer: &mut Lexer) -> Result<TypeNode, String> {
     // temporary of the inner most type
-    let mut final_type = DataTypeBlock::Empty;
+    let mut final_type = TypeNode::Empty;
 
     // we hold the modifier, qualifier and type of the left most part of the type
     // for most types this is all there will be but for anything more complex (such as a pointer or anytype of nesting)
@@ -209,10 +207,15 @@ pub fn parse_type(lexer: &mut Lexer) -> Result<DataTypeBlock, String> {
     while let Some(token) = lexer.peek() {
         match token {
             TokenTypes::Identifier(identifier) => {
-                // variable_name = Some(identifier);
-                final_type = DataTypeBlock::Variable {
+                // this is true if its a function's return type
+                // if thats the case then we dont want to pick up its name and we break
+                if let Some(TokenTypes::Operator(OperatorTypes::LParen)) = lexer.forward_peek() {
+                    break;
+                }
+
+                final_type = TypeNode::Variable {
                     name: identifier,
-                    held_value: Box::new(DataTypeBlock::Empty),
+                    held_value: Box::new(TypeNode::Empty),
                 };
                 lexer.advance();
             }
@@ -232,9 +235,8 @@ pub fn parse_type(lexer: &mut Lexer) -> Result<DataTypeBlock, String> {
                     pointer_function_parameters = parse_parameter_list(lexer)?;
                 } else {
                     final_type = parse_type(lexer)?;
+                    lexer.advance();
                 };
-
-                lexer.advance();
             }
             TokenTypes::Operator(OperatorTypes::LSquareBracket) => {
                 lexer.advance();
@@ -247,9 +249,9 @@ pub fn parse_type(lexer: &mut Lexer) -> Result<DataTypeBlock, String> {
     }
     // this is because multidimensional arrays exist and we start at the outside in
     for array_expr in array_expressions.iter().rev() {
-        let internal_type = DataTypeBlock::Array {
+        let internal_type = TypeNode::Array {
             expr: array_expr.clone(),
-            held_value: Box::new(DataTypeBlock::Empty),
+            held_value: Box::new(TypeNode::Empty),
         };
 
         final_type.set_most_nested_held_value(&internal_type);
@@ -258,24 +260,24 @@ pub fn parse_type(lexer: &mut Lexer) -> Result<DataTypeBlock, String> {
     if !pointer_function_parameters.is_empty() {
         let most_nested_type = final_type.get_most_nested_layer();
 
-        let DataTypeBlock::Pointer { qualifiers, .. } = most_nested_type.clone() else {
+        let TypeNode::Pointer { qualifiers, .. } = most_nested_type.clone() else {
             return Err(String::from(
                 "Expected type to be pointer due to function parameters",
             ));
         };
 
-        *most_nested_type = DataTypeBlock::Pointer {
+        *most_nested_type = TypeNode::Pointer {
             qualifiers,
             function_parameters: pointer_function_parameters.clone(),
-            held_value: Box::new(DataTypeBlock::Empty),
+            held_value: Box::new(TypeNode::Empty),
         };
     }
 
     if found_pointer {
-        let internal_type = DataTypeBlock::Pointer {
+        let internal_type = TypeNode::Pointer {
             qualifiers: pointer_qualifiers.clone(),
             function_parameters: Vec::new(),
-            held_value: Box::new(DataTypeBlock::Empty),
+            held_value: Box::new(TypeNode::Empty),
         };
 
         final_type.set_most_nested_held_value(&internal_type);
@@ -288,7 +290,7 @@ pub fn parse_type(lexer: &mut Lexer) -> Result<DataTypeBlock, String> {
     Ok(final_type)
 }
 
-fn parse_parameter_list(lexer: &mut Lexer) -> Result<Vec<DataTypeBlock>, String> {
+pub fn parse_parameter_list(lexer: &mut Lexer) -> Result<Vec<TypeNode>, String> {
     let mut param_list = Vec::new();
 
     while !matches!(
@@ -307,6 +309,7 @@ fn parse_parameter_list(lexer: &mut Lexer) -> Result<Vec<DataTypeBlock>, String>
             lexer.expect(|x| matches!(x, TokenTypes::Comma))?;
         }
     }
+    lexer.advance();
     Ok(param_list)
 }
 
@@ -324,7 +327,7 @@ fn parse_pointer_qualifiers(lexer: &mut Lexer) -> Vec<DataTypes> {
     qualifiers
 }
 
-fn parse_normal_type(lexer: &mut Lexer) -> Result<DataTypeBlock, String> {
+fn parse_normal_type(lexer: &mut Lexer) -> Result<TypeNode, String> {
     let mut base_type = DataTypes::NoType;
     let mut modifiers: Vec<DataTypes> = Vec::new();
     let mut qualifiers: Vec<DataTypes> = Vec::new();
@@ -369,9 +372,9 @@ fn parse_normal_type(lexer: &mut Lexer) -> Result<DataTypeBlock, String> {
         qualifiers,
     };
 
-    Ok(DataTypeBlock::Normal {
+    Ok(TypeNode::Normal {
         held_type: final_type,
-        held_value: Box::new(DataTypeBlock::Empty),
+        held_value: Box::new(TypeNode::Empty),
     })
 }
 
