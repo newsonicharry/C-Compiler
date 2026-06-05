@@ -1,12 +1,20 @@
-use crate::{lexer::lexer::Lexer, parser::parser::parse_program};
+use crate::{
+    lexer::lexer::Lexer,
+    parser::{parser::parse_program, type_parser::is_valid_var_name},
+};
 
 mod lexer;
 mod parser;
+mod semantics;
 
 const EXPRESSION: &str = "
 
-    int my_function(char* param1, float x);
-    int* x = 10;
+struct MyStruct{
+  int x;
+  float y;
+} first, second, third;
+
+
 
 
 ";

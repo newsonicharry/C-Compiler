@@ -1,6 +1,8 @@
-use crate::lexer::language_features::{AssignmentTypes, KeywordTypes, OperatorTypes};
+use crate::lexer::language_features::KeywordTypes;
+use crate::lexer::language_features::{AssignmentTypes, OperatorTypes};
 use crate::lexer::lexer::{Lexer, TokenTypes};
 use crate::parser::expression_parser::{ExprNode, parse_expression};
+use crate::parser::struct_parser::{Struct, parse_struct_keyword};
 use crate::parser::type_parser::{TypeNode, parse_parameter_list, parse_type};
 use crate::parser::typedef::is_typedef;
 use std::fmt::Display;
@@ -37,14 +39,13 @@ pub enum GlobalNode {
         expr_statement: StatementNode,
     },
 
-    Struct {
-        name: Option<String>, // can be anonymous
-        members: Vec<TypeNode>,
-    },
-
     Union {
         name: Option<String>,
         members: Vec<TypeNode>,
+    },
+
+    Struct {
+        data: Struct,
     },
 
     Enum {
@@ -95,6 +96,24 @@ impl GlobalNode {
                 output.push_str(&expr_statement.to_string());
             }
 
+            Self::Struct { data } => {
+                output.push_str(&format!("(Struct"));
+
+                if let Some(name) = data.name.clone() {
+                    output.push_str(&format!(" {name}"));
+                }
+
+                if data.is_defined {
+                    output.push_str(&format!(" (Members\n"));
+                    for member in &data.members {
+                        output.push_str(&format!("{member}\n"));
+                    }
+                    output.push_str(")");
+                }
+
+                output.push_str(")");
+            }
+
             _ => todo!(),
         }
 
@@ -102,6 +121,7 @@ impl GlobalNode {
     }
 }
 
+#[derive(Clone)]
 pub enum StatementNode {
     // block, expression, if, switch, while, do, for, return, break, continue, goto, label, case, default
     Block {
@@ -172,6 +192,11 @@ pub fn parse_program(lexer: &mut Lexer) -> Result<Root, String> {
                 root.0.push(parse_function_or_var(lexer)?);
             }
 
+            TokenTypes::Keyword(KeywordTypes::Struct) => {
+                root.0.extend(parse_struct_keyword(lexer)?);
+            }
+
+            TokenTypes::Semicolon => {} // semicolons can be by themselves
             _ => unimplemented!(),
         }
     }
@@ -204,11 +229,13 @@ fn parse_function_or_var(lexer: &mut Lexer) -> Result<GlobalNode, String> {
 
     match is_function {
         true => parse_function(lexer),
-        false => parse_var(lexer),
+        false => Ok(GlobalNode::Variable {
+            expr_statement: parse_var(lexer)?,
+        }),
     }
 }
 
-fn parse_var(lexer: &mut Lexer) -> Result<GlobalNode, String> {
+pub fn parse_var(lexer: &mut Lexer) -> Result<StatementNode, String> {
     let var_type = parse_type(lexer)?;
 
     let Some(next_token) = lexer.peek() else {
@@ -223,9 +250,7 @@ fn parse_var(lexer: &mut Lexer) -> Result<GlobalNode, String> {
             r_value: None,
         };
 
-        return Ok(GlobalNode::Variable {
-            expr_statement: final_var,
-        });
+        return Ok(final_var);
     }
 
     let assign_op = lexer.expect_extract(|x| match x {
@@ -242,9 +267,7 @@ fn parse_var(lexer: &mut Lexer) -> Result<GlobalNode, String> {
         r_value: Some((assign_op, expression)),
     };
 
-    return Ok(GlobalNode::Variable {
-        expr_statement: final_var,
-    });
+    Ok(final_var)
 }
 
 fn parse_function(lexer: &mut Lexer) -> Result<GlobalNode, String> {

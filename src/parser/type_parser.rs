@@ -1,6 +1,7 @@
 use crate::lexer::language_features::{DataTypes, OperatorTypes};
 use crate::lexer::lexer::{Lexer, TokenTypes};
 use crate::parser::expression_parser::{ExprNode, parse_expression};
+use crate::parser::helper::verify_next_in_comma_list;
 use std::fmt::Display;
 
 #[derive(Clone, Debug)]
@@ -52,6 +53,10 @@ pub enum TypeNode {
         expr: ExprNode,
         held_value: Box<TypeNode>,
     },
+
+    Struct {
+        name: Option<String>, // if its declared from an anonymous struct
+    },
 }
 
 impl TypeNode {
@@ -88,6 +93,10 @@ impl TypeNode {
             }
 
             Self::Empty => *self = nested_value.clone(),
+
+            Self::Struct { .. } => {
+                panic!("Struct type is a unique type with no internal values")
+            }
         }
     }
 
@@ -127,7 +136,7 @@ impl TypeNode {
         match node {
             TypeNode::Variable { name, held_value } => {
                 if !name.is_empty() {
-                    output.push_str(&format!("(Var {} {})", name, Self::display(held_value)));
+                    output.push_str(&format!("(Name {} {})", name, Self::display(held_value)));
                 }
             }
 
@@ -172,6 +181,14 @@ impl TypeNode {
                 output.push_str(")");
             }
 
+            TypeNode::Struct { name } => {
+                if let Some(name) = name {
+                    output.push_str(&format!("(Struct {name})"));
+                } else {
+                    output.push_str(&format!("(Struct (anonymous))"));
+                }
+            }
+
             TypeNode::Empty => {}
         }
 
@@ -211,6 +228,10 @@ pub fn parse_type(lexer: &mut Lexer) -> Result<TypeNode, String> {
                 // if thats the case then we dont want to pick up its name and we break
                 if let Some(TokenTypes::Operator(OperatorTypes::LParen)) = lexer.forward_peek() {
                     break;
+                }
+
+                if !is_valid_var_name(&identifier) {
+                    return Err(String::from("Variable does not have a valid variable name"));
                 }
 
                 final_type = TypeNode::Variable {
@@ -298,16 +319,16 @@ pub fn parse_parameter_list(lexer: &mut Lexer) -> Result<Vec<TypeNode>, String> 
         Some(TokenTypes::Operator(OperatorTypes::RParen))
     ) {
         if matches!(lexer.peek(), Some(TokenTypes::Comma)) {
-            lexer.advance();
+            return Err(String::from("Unexpected comma in parameter list"));
         }
 
         param_list.push(parse_type(lexer)?);
 
-        if let Some(next_token) = lexer.peek()
-            && !matches!(next_token, TokenTypes::Operator(OperatorTypes::RParen))
-        {
-            lexer.expect(|x| matches!(x, TokenTypes::Comma))?;
-        }
+        verify_next_in_comma_list(
+            lexer,
+            TokenTypes::Operator(OperatorTypes::RParen),
+            "Unexpected end to parameter list",
+        )?;
     }
     lexer.advance();
     Ok(param_list)
@@ -378,6 +399,19 @@ fn parse_normal_type(lexer: &mut Lexer) -> Result<TypeNode, String> {
     })
 }
 
+pub fn is_valid_var_name(name: &str) -> bool {
+    // we don't have to worry about whitespace as the lexer can't parse that
+    if name.is_empty() {
+        return false;
+    }
+
+    if name.chars().nth(0).unwrap().is_ascii_digit() {
+        return false;
+    }
+
+    name.chars().all(|x| x.is_ascii_alphanumeric() || x == '_')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,14 +430,17 @@ mod tests {
         let test_cases = vec![
             (
                 "unsigned long long int a;",
-                "(Var a (Type unsigned long long int))",
+                "(Name a (Type unsigned long long int))",
             ),
             (
                 "const volatile double b;",
-                "(Var b (Type const volatile double))",
+                "(Name b (Type const volatile double))",
             ),
-            ("float * restrict c;", "(Var c (Ptr restrict (Type float)))"),
-            ("short d;", "(Var d (Type short int))"),
+            (
+                "float * restrict c;",
+                "(Name c (Ptr restrict (Type float)))",
+            ),
+            ("short d;", "(Name d (Type short int))"),
         ];
 
         run_tests(test_cases);
@@ -412,12 +449,12 @@ mod tests {
     #[test]
     fn test_pointer_and_array() {
         let test_cases = vec![
-            ("int *ptr;", "(Var ptr (Ptr (Type int)))"),
-            ("const int *c_ptr;", "(Var c_ptr (Ptr (Type const int)))"),
-            ("int * const ptr_c;", "(Var ptr_c (Ptr const (Type int)))"),
+            ("int *ptr;", "(Name ptr (Ptr (Type int)))"),
+            ("const int *c_ptr;", "(Name c_ptr (Ptr (Type const int)))"),
+            ("int * const ptr_c;", "(Name ptr_c (Ptr const (Type int)))"),
             (
                 "char matrix[10][20];",
-                "(Var matrix (Arr 20 (Arr 10 (Type char))))",
+                "(Name matrix (Arr 20 (Arr 10 (Type char))))",
             ),
         ];
 
@@ -429,15 +466,15 @@ mod tests {
         let test_cases = vec![
             (
                 "void (*callback)(void);",
-                "(Var callback (FuncPtr (Params (Type void)) (Type void)))",
+                "(Name callback (FuncPtr (Params (Type void)) (Type void)))",
             ),
             (
                 "int (*math_op)(int, int);",
-                "(Var math_op (FuncPtr (Params (Type int)(Type int)) (Type int)))",
+                "(Name math_op (FuncPtr (Params (Type int)(Type int)) (Type int)))",
             ),
             (
                 "const void * (*lookup_table[5])(const char *);",
-                "(Var lookup_table (Arr 5 (FuncPtr (Params (Ptr (Type const char))) (Ptr (Type const void)))))",
+                "(Name lookup_table (Arr 5 (FuncPtr (Params (Ptr (Type const char))) (Ptr (Type const void)))))",
             ),
         ];
 
@@ -449,15 +486,15 @@ mod tests {
         let test_cases = vec![
             (
                 "const int *(* volatile multi_layer_ptr)[10];",
-                "(Var multi_layer_ptr (Ptr volatile (Arr 10 (Ptr (Type const int)))))",
+                "(Name multi_layer_ptr (Ptr volatile (Arr 10 (Ptr (Type const int)))))",
             ),
             (
                 "unsigned int (*(*func_ptr_array[5])(void))[10];",
-                "(Var func_ptr_array (Arr 5 (FuncPtr (Params (Type void)) (Ptr (Arr 10 (Type unsigned int))))))",
+                "(Name func_ptr_array (Arr 5 (FuncPtr (Params (Type void)) (Ptr (Arr 10 (Type unsigned int))))))",
             ),
             (
                 "const char * const (*(*complex_func)(int, void (*)(int)))(double);",
-                "(Var complex_func (FuncPtr (Params (Type int)(FuncPtr (Params (Type int)) (Type void))) (FuncPtr (Params (Type double)) (Ptr const (Type const char)))))",
+                "(Name complex_func (FuncPtr (Params (Type int)(FuncPtr (Params (Type int)) (Type void))) (FuncPtr (Params (Type double)) (Ptr const (Type const char)))))",
             ),
         ];
 
