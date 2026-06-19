@@ -1,14 +1,35 @@
 use crate::lexer::language_features::AssignmentTypes;
+use crate::lexer::language_features::LiteralTypes;
+use crate::lexer::language_features::OperatorTypes;
 use crate::lexer::lexer::{Lexer, TokenTypes};
-use crate::parser::expression_parser::ExprNode;
 use crate::parser::helper::verify_next_in_comma_list;
-use crate::parser::parser::{GlobalNode, StatementNode, parse_var};
-use crate::parser::type_parser::{TypeNode, is_valid_var_name};
+use crate::parser::parser::{GlobalNode, StatementNode};
+use crate::parser::type_parser::{TypeNode, is_valid_var_name, parse_type};
+use std::fmt::Display;
 
 pub struct Struct {
     pub is_defined: bool,
     pub name: Option<String>,
-    pub members: Vec<TypeNode>,
+    pub members: Vec<StructMember>,
+}
+
+pub struct StructMember {
+    pub item_type: TypeNode,
+    pub bit_field: Option<u64>,
+}
+
+impl Display for StructMember {
+    fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut output = String::from(&format!("(Member {}", self.item_type));
+
+        if let Some(bitfield) = self.bit_field {
+            output.push_str(&format!("( Bitfield {})", bitfield.to_string()));
+        }
+
+        output.push_str(")");
+
+        write!(display, "{output}")
+    }
 }
 
 // struct definition / declaration
@@ -60,7 +81,9 @@ pub fn parse_struct_keyword(lexer: &mut Lexer) -> Result<Vec<GlobalNode>, String
         return Ok(struct_and_vars);
     }
 
+    // if its a declaration
     if matches!(lexer.peek(), Some(TokenTypes::Semicolon)) {
+        lexer.advance();
         let declared_struct = Struct {
             is_defined: false,
             name: struct_name,
@@ -85,18 +108,33 @@ fn parse_struct_definition(lexer: &mut Lexer, name: &Option<String>) -> Result<S
     lexer.advance(); // move past the left curly brace
 
     while !matches!(lexer.peek(), Some(TokenTypes::RCurlyBrace)) {
-        let member = parse_var(lexer)?;
+        let member = parse_type(lexer)?;
 
-        let StatementNode::Expression { var_type, r_value } = member else {
-            unreachable!()
+        let Some(next_token) = lexer.peek() else {
+            return Err(String::from(
+                "Expected either a semicolon or colon at the end of struct member, got nothing",
+            ));
         };
 
-        if r_value.is_some() {
-            return Err(String::from(
-                "Struct member must be a declaration, definition given",
-            ));
+        let mut bit_field = None;
+
+        if matches!(next_token, TokenTypes::Operator(OperatorTypes::Colon)) {
+            lexer.advance();
+
+            bit_field = Some(lexer.expect_extract(|x| match x {
+                TokenTypes::Literal(LiteralTypes::Integer(integer)) => Some(integer),
+                _ => None,
+            })?);
         }
-        members.push(var_type);
+
+        lexer.expect(|x| matches!(x, TokenTypes::Semicolon))?;
+
+        let final_member = StructMember {
+            item_type: member,
+            bit_field,
+        };
+
+        members.push(final_member);
     }
 
     lexer.advance();
@@ -149,6 +187,7 @@ fn parse_vars_from_struct(
             name: var_name,
             held_value: Box::new(TypeNode::Struct {
                 name: struct_name.clone(),
+                qualifiers: vec![],
             }),
         };
 
@@ -188,6 +227,7 @@ fn parse_struct_var(
         name: variable_name,
         held_value: Box::new(TypeNode::Struct {
             name: struct_name.clone(),
+            qualifiers: vec![],
         }),
     };
 
@@ -210,22 +250,95 @@ fn parse_struct_var(
     };
 
     if next_token == TokenTypes::LCurlyBrace {
-        let assigned_to = parse_aggregate_init(lexer, struct_name)?;
+        todo!()
+        // let assigned_to = parse_aggregate_init(lexer)?;
 
-        let final_var = StatementNode::Expression {
-            var_type: final_type,
-            r_value: Some((AssignmentTypes::SimpleAssignment, assigned_to)),
-        };
+        // let final_var = StatementNode::Expression {
+        //     var_type: final_type,
+        //     r_value: Some((AssignmentTypes::SimpleAssignment, assigned_to)),
+        // };
 
-        return Ok(final_var);
+        // return Ok(final_var);
     }
 
     todo!()
 }
 
-fn parse_aggregate_init(
-    lexer: &mut Lexer,
-    struct_name: &Option<String>,
-) -> Result<ExprNode, String> {
-    todo!()
+/*
+Everything that I need to add
+
+#Structs in structs
+struct Point{
+  struct AA{
+    int z;
+    struct AAA{
+      int z;
+    } zz;
+  } another;
+
+};
+
+#Initialization
+struct Point p = {1, 2};
+struct Point p = {.x = 1, .y = 2};
+struct Point p = (struct Point){1, 2};
+
+# Additional variables in the same declaration
+struct Point p, q;
+struct Point p = {1,2}, q = {3,4};
+int x = 10, y = 20;
+
+#Arrays
+struct Point p[] = {{1,2}, {3,4}};
+
+#Function declarations
+struct Point p(void);
+struct Point p(int);
+struct Point p(int, char *);
+
+#Typedef declarations
+typedef struct Point p;
+
+#Struct member access or assignment
+p = q;
+p.x = 1;
+
+*/
+
+#[cfg(test)]
+mod tests {
+    use crate::parser::helper::run_tests;
+    use crate::parser::parser::parse_program;
+
+    #[test]
+    fn test_struct_creation() {
+        let test_cases = vec![
+            ("struct Point;", "(Struct Point)"),
+            ("struct {};", "(Struct (Members))"),
+            ("struct Point{};", "(Struct Point (Members))"),
+            (
+                "struct Point{int x; int y;};",
+                "(Struct Point (Members
+                  (Member (Name x (Type int)))
+                  (Member (Name y (Type int)))
+                ))",
+            ),
+            (
+                "struct {int x; int y;};",
+                "(Struct (Members
+                  (Member (Name x (Type int)))
+                  (Member (Name y (Type int)))
+                ))",
+            ),
+            (
+                "struct Point{int x : 3; int y : 2;};",
+                "(Struct Point (Members
+                  (Member (Name x (Type int)) (Bitfield 3))
+                  (Member (Name y (Type int)) (Bitfield 2))
+                ))",
+            ),
+        ];
+
+        run_tests(parse_program, test_cases);
+    }
 }

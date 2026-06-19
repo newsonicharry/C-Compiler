@@ -1,4 +1,4 @@
-use crate::lexer::language_features::{DataTypes, OperatorTypes};
+use crate::lexer::language_features::{DataTypes, KeywordTypes, OperatorTypes};
 use crate::lexer::lexer::{Lexer, TokenTypes};
 use crate::parser::expression_parser::{ExprNode, parse_expression};
 use crate::parser::helper::verify_next_in_comma_list;
@@ -56,6 +56,7 @@ pub enum TypeNode {
 
     Struct {
         name: Option<String>, // if its declared from an anonymous struct
+        qualifiers: Vec<DataTypes>,
     },
 }
 
@@ -181,12 +182,23 @@ impl TypeNode {
                 output.push_str(")");
             }
 
-            TypeNode::Struct { name } => {
+            TypeNode::Struct { name, qualifiers } => {
+                output.push_str(&format!("(Struct"));
+
                 if let Some(name) = name {
-                    output.push_str(&format!("(Struct {name})"));
-                } else {
-                    output.push_str(&format!("(Struct (anonymous))"));
+                    output.push_str(&format!(" {name}"));
                 }
+
+                if !qualifiers.is_empty() {
+                    output.push_str("(Qualifiers");
+                    for qualifier in qualifiers {
+                        output.push_str(&format!(" {qualifier}"));
+                    }
+
+                    output.push_str(")");
+                }
+
+                output.push_str(")");
             }
 
             TypeNode::Empty => {}
@@ -204,6 +216,19 @@ impl Display for TypeNode {
     }
 }
 
+pub fn parse_types(lexer: &mut Lexer) -> Result<Vec<TypeNode>, String> {
+    todo!();
+    let inital_type = parse_type(lexer)?;
+
+    let Some(next_token) = lexer.peek() else {
+        return Err(String::from("Expected token after type, got nothing"));
+    };
+
+    // if next_token == TokenTypes::Comma {
+    // while
+    // }
+}
+
 pub fn parse_type(lexer: &mut Lexer) -> Result<TypeNode, String> {
     // temporary of the inner most type
     let mut final_type = TypeNode::Empty;
@@ -214,8 +239,7 @@ pub fn parse_type(lexer: &mut Lexer) -> Result<TypeNode, String> {
     let mut original_type = None;
 
     // if it is a pointer we hold its qualifiers
-    let mut found_pointer = false;
-    let mut pointer_qualifiers = Vec::new();
+    let mut all_pointer_data: Vec<Vec<DataTypes>> = Vec::new();
     let mut pointer_function_parameters = Vec::new();
 
     // if theres an array element(s) we hold that as well
@@ -241,13 +265,12 @@ pub fn parse_type(lexer: &mut Lexer) -> Result<TypeNode, String> {
                 lexer.advance();
             }
 
-            TokenTypes::DataType(_) => {
+            TokenTypes::DataType(_) | TokenTypes::Keyword(KeywordTypes::Struct) => {
                 original_type = Some(parse_normal_type(lexer)?);
             }
 
             TokenTypes::Operator(OperatorTypes::Star) => {
-                found_pointer = true;
-                pointer_qualifiers = parse_pointer_qualifiers(lexer);
+                all_pointer_data.push(parse_pointer_qualifiers(lexer));
             }
             TokenTypes::Operator(OperatorTypes::LParen) => {
                 lexer.advance();
@@ -261,7 +284,7 @@ pub fn parse_type(lexer: &mut Lexer) -> Result<TypeNode, String> {
             }
             TokenTypes::Operator(OperatorTypes::LSquareBracket) => {
                 lexer.advance();
-                array_expressions.push(parse_expression(lexer, 0));
+                array_expressions.push(parse_expression(lexer, 0)?);
                 lexer.advance();
             }
 
@@ -294,7 +317,7 @@ pub fn parse_type(lexer: &mut Lexer) -> Result<TypeNode, String> {
         };
     }
 
-    if found_pointer {
+    for pointer_qualifiers in all_pointer_data.iter().rev() {
         let internal_type = TypeNode::Pointer {
             qualifiers: pointer_qualifiers.clone(),
             function_parameters: Vec::new(),
@@ -323,7 +346,7 @@ pub fn parse_parameter_list(lexer: &mut Lexer) -> Result<Vec<TypeNode>, String> 
         }
 
         param_list.push(parse_type(lexer)?);
-
+        println!("{:?}", param_list);
         verify_next_in_comma_list(
             lexer,
             TokenTypes::Operator(OperatorTypes::RParen),
@@ -371,6 +394,23 @@ fn parse_normal_type(lexer: &mut Lexer) -> Result<TypeNode, String> {
         lexer.advance();
     }
 
+    if matches!(
+        lexer.peek(),
+        Some(TokenTypes::Keyword(KeywordTypes::Struct))
+    ) {
+        lexer.advance();
+
+        let struct_name = lexer.expect_extract(|x| match x {
+            TokenTypes::Identifier(struct_name) => Some(struct_name),
+            _ => None,
+        })?;
+
+        return Ok(TypeNode::Struct {
+            name: Some(struct_name),
+            qualifiers,
+        });
+    }
+
     let is_long_or_short = modifiers
         .iter()
         .any(|x| *x == DataTypes::Long || *x == DataTypes::Short);
@@ -414,16 +454,9 @@ pub fn is_valid_var_name(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::parser::helper::run_tests;
 
-    fn run_tests(test_cases: Vec<(&str, &str)>) {
-        for (test_case, correct_result) in test_cases {
-            let mut lexer = Lexer::new(&test_case);
-            let result = parse_type(&mut lexer).unwrap().to_string();
-            println!("{result}");
-            assert_eq!(correct_result, result);
-        }
-    }
+    use super::*;
 
     #[test]
     fn test_modifier_qualifier() {
@@ -443,7 +476,7 @@ mod tests {
             ("short d;", "(Name d (Type short int))"),
         ];
 
-        run_tests(test_cases);
+        run_tests(parse_type, test_cases);
     }
 
     #[test]
@@ -451,14 +484,17 @@ mod tests {
         let test_cases = vec![
             ("int *ptr;", "(Name ptr (Ptr (Type int)))"),
             ("const int *c_ptr;", "(Name c_ptr (Ptr (Type const int)))"),
+            ("int** p", "(Name p (Ptr (Ptr (Type int))))"),
+            ("int** const p", "(Name p (Ptr const (Ptr (Type int))))"),
+            ("int* const * p", "(Name p (Ptr (Ptr const (Type int))))"),
             ("int * const ptr_c;", "(Name ptr_c (Ptr const (Type int)))"),
             (
                 "char matrix[10][20];",
-                "(Name matrix (Arr 20 (Arr 10 (Type char))))",
+                "(Name matrix (Arr (Num 20) (Arr (Num 10) (Type char))))",
             ),
         ];
 
-        run_tests(test_cases);
+        run_tests(parse_type, test_cases);
     }
 
     #[test]
@@ -474,11 +510,11 @@ mod tests {
             ),
             (
                 "const void * (*lookup_table[5])(const char *);",
-                "(Name lookup_table (Arr 5 (FuncPtr (Params (Ptr (Type const char))) (Ptr (Type const void)))))",
+                "(Name lookup_table (Arr (Num 5) (FuncPtr (Params (Ptr (Type const char))) (Ptr (Type const void)))))",
             ),
         ];
 
-        run_tests(test_cases);
+        run_tests(parse_type, test_cases);
     }
 
     #[test]
@@ -486,11 +522,11 @@ mod tests {
         let test_cases = vec![
             (
                 "const int *(* volatile multi_layer_ptr)[10];",
-                "(Name multi_layer_ptr (Ptr volatile (Arr 10 (Ptr (Type const int)))))",
+                "(Name multi_layer_ptr (Ptr volatile (Arr (Num 10) (Ptr (Type const int)))))",
             ),
             (
                 "unsigned int (*(*func_ptr_array[5])(void))[10];",
-                "(Name func_ptr_array (Arr 5 (FuncPtr (Params (Type void)) (Ptr (Arr 10 (Type unsigned int))))))",
+                "(Name func_ptr_array (Arr (Num 5) (FuncPtr (Params (Type void)) (Ptr (Arr (Num 10) (Type unsigned int))))))",
             ),
             (
                 "const char * const (*(*complex_func)(int, void (*)(int)))(double);",
@@ -498,6 +534,40 @@ mod tests {
             ),
         ];
 
-        run_tests(test_cases);
+        run_tests(parse_type, test_cases);
+    }
+
+    #[test]
+    fn test_struct_types() {
+        let test_cases = vec![
+            ("struct Point *p;", "(Name p (Ptr (Struct Point)))"),
+            ("struct Point **p;", "(Name p (Ptr (Ptr (Struct Point))))"),
+            (
+                "struct Point p[10];",
+                "(Name p (Arr (Num 10) (Struct Point)))",
+            ),
+            (
+                "struct Point p[n];",
+                "(Name p (Arr (Var n) (Struct Point)))",
+            ),
+            (
+                "struct Point (*p)(void);",
+                "(Name p (FuncPtr (Params (Type void)) (Struct Point)))",
+            ),
+            (
+                "struct Point (*p)(int, int);",
+                "(Name p (FuncPtr (Params (Type int)(Type int)) (Struct Point)))",
+            ),
+            (
+                "const struct Point p;",
+                "(Name p (Struct Point (Qualifiers const)))",
+            ),
+            (
+                "volatile struct Point p;",
+                "(Name p (Struct Point (Qualifiers volatile)))",
+            ),
+        ];
+
+        run_tests(parse_type, test_cases);
     }
 }

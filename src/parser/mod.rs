@@ -1,4 +1,5 @@
 // pub(in crate::parser) mod expression_parser;
+pub mod aggregate_init;
 pub mod expression_parser;
 pub mod helper;
 pub mod struct_parser;

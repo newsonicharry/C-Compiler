@@ -1,5 +1,7 @@
 use std::{fmt::Display, str::FromStr};
 
+use crate::lexer::escape_sequences::{CharList, CharType};
+
 macro_rules! impl_from_str_for_enum {
     ($name:ty) => {
         impl FromStr for $name {
@@ -117,8 +119,8 @@ pub enum DataTypes {
 impl DataTypes {
     const MAPPINGS: &'static [(&'static str, Self); 15] = &[
         ("NOTYPE", Self::NoType),
-        ("auto", Self::Auto),
         ("char", Self::Char),
+        ("auto", Self::Auto),
         ("const", Self::Const),
         ("double", Self::Double),
         ("float", Self::Float),
@@ -206,6 +208,9 @@ pub enum OperatorTypes {
     And,
     Or,
 
+    // Bitfields, ternary, goto, switch
+    Colon,
+
     // ambiguious operators
     Inc,        // ++ can be prefix or postfix
     Dec,        // -- can be prefix or postfix
@@ -228,7 +233,7 @@ pub enum OperatorTypes {
 }
 
 impl OperatorTypes {
-    const MAPPINGS: &'static [(&'static str, Self); 29] = &[
+    const MAPPINGS: &'static [(&'static str, Self); 30] = &[
         ("(UNKNOWN)", Self::NoOperator),
         ("*", Self::Star),
         ("/", Self::Divide),
@@ -258,6 +263,7 @@ impl OperatorTypes {
         ("--", Self::Dec),
         ("~", Self::BitNot),
         ("!", Self::Not),
+        (":", Self::Colon),
     ];
 
     pub fn potential_unary(&self) -> bool {
@@ -313,8 +319,8 @@ impl_display_for_enum!(OperatorTypes);
 pub enum LiteralTypes {
     Float(i64, u32), // integer and shift
     Integer(u64),
-    String(String),
-    Character(char),
+    String(CharList),
+    Character(CharType),
 }
 
 impl Display for LiteralTypes {

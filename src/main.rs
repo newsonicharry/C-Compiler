@@ -1,31 +1,27 @@
 use crate::{
-    lexer::lexer::Lexer,
-    parser::{parser::parse_program, type_parser::is_valid_var_name},
+    lexer::{escape_sequences::split_string, lexer::Lexer},
+    parser::{
+        aggregate_init::parse_aggregate_init,
+        expression_parser::parse_expression,
+        parser::parse_program,
+        type_parser::{is_valid_var_name, parse_parameter_list, parse_type},
+    },
 };
 
 mod lexer;
 mod parser;
 mod semantics;
 
-const EXPRESSION: &str = "
-
-struct MyStruct{
-  int x;
-  float y;
-} first, second, third;
+const EXPRESSION: &str = r#"
 
 
-
-
-";
-
-// int* my_func(float x, char y);
+{"abc", "xy"}
+    
+"#;
 
 fn main() {
-    let mut lexer = Lexer::new(EXPRESSION);
-    let program = parse_program(&mut lexer).unwrap();
-    println!("{}", program);
-    // let final_type = parse_type(type_parser::parse_type&mut lexer).unwrap();
+    let mut lexer = Lexer::new(EXPRESSION).unwrap();
+    let aggregate = parse_aggregate_init(&mut lexer).unwrap();
 
-    // println!("{}", final_type);
+    println!("{aggregate}");
 }

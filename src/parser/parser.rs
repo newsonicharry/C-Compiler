@@ -1,6 +1,7 @@
 use crate::lexer::language_features::KeywordTypes;
 use crate::lexer::language_features::{AssignmentTypes, OperatorTypes};
 use crate::lexer::lexer::{Lexer, TokenTypes};
+use crate::parser::aggregate_init::{AggregateInit, parse_aggregate_init};
 use crate::parser::expression_parser::{ExprNode, parse_expression};
 use crate::parser::struct_parser::{Struct, parse_struct_keyword};
 use crate::parser::type_parser::{TypeNode, parse_parameter_list, parse_type};
@@ -15,6 +16,10 @@ impl Display for Root {
 
         for node in self.0.iter() {
             output.push_str(&format!("{node}\n"));
+        }
+
+        if output.chars().last() == Some('\n') {
+            output.pop();
         }
 
         write!(display, "{output}")
@@ -58,15 +63,17 @@ pub enum GlobalNode {
 
 impl Display for GlobalNode {
     fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let final_str = Self::display(self);
+        let final_str = self.display(0);
 
         write!(display, "{final_str}")
     }
 }
 
 impl GlobalNode {
-    fn display(&self) -> String {
+    fn display(&self, indentation: usize) -> String {
         let mut output = String::new();
+
+        let indent_chars = " ".repeat(indentation + 2);
 
         match self {
             Self::Function {
@@ -104,9 +111,14 @@ impl GlobalNode {
                 }
 
                 if data.is_defined {
-                    output.push_str(&format!(" (Members\n"));
+                    output.push_str(&format!(" (Members"));
+
                     for member in &data.members {
-                        output.push_str(&format!("{member}\n"));
+                        output.push_str(&format!("\n{indent_chars}{member}"));
+                    }
+
+                    if !data.members.is_empty() {
+                        output.push_str("\n");
                     }
                     output.push_str(")");
                 }
@@ -130,8 +142,32 @@ pub enum StatementNode {
 
     Expression {
         var_type: TypeNode,
-        r_value: Option<(AssignmentTypes, ExprNode)>,
+        r_value: Option<(AssignmentTypes, InitalizerNode)>,
     },
+}
+
+#[derive(Clone, Debug)]
+pub struct InitalizerNode {
+    pub aggregate: Option<AggregateInit>,
+    pub expr: Option<ExprNode>,
+}
+
+impl Display for InitalizerNode {
+    fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let final_str;
+
+        if let Some(aggregate) = self.aggregate.clone() {
+            final_str = aggregate.to_string();
+        } else {
+            let Some(expr) = self.expr.clone() else {
+                unreachable!()
+            };
+
+            final_str = expr.to_string();
+        }
+
+        write!(display, "{final_str}")
+    }
 }
 
 impl Display for StatementNode {
@@ -148,20 +184,21 @@ impl StatementNode {
 
         match self {
             Self::Expression { var_type, r_value } => {
-                output.push_str(&format!("(Variable {var_type}"));
+                todo!()
+                // output.push_str(&format!("(Variable {var_type}"));
 
-                if let Some((assign_op, expression)) = r_value {
-                    output.push_str(&format!(
-                        " {assign_op} {}",
-                        expression
-                            .to_string()
-                            .chars()
-                            .filter(|x| *x != '\n')
-                            .collect::<String>(),
-                    ));
-                }
+                // if let Some((assign_op, expression)) = r_value {
+                //     output.push_str(&format!(
+                //         " {assign_op} {}",
+                //         expression
+                //             .to_string()
+                //             .chars()
+                //             .filter(|x| *x != '\n')
+                //             .collect::<String>(),
+                //     ));
+                // }
 
-                output.push_str(")");
+                // output.push_str(")");
             }
 
             Self::Block { statements } => {
@@ -258,13 +295,13 @@ pub fn parse_var(lexer: &mut Lexer) -> Result<StatementNode, String> {
         _ => None,
     })?;
 
-    let expression = parse_expression(lexer, 0);
+    let initalizer = parse_initalizer(lexer)?;
 
     lexer.expect(|x| matches!(x, TokenTypes::Semicolon))?;
 
     let final_var = StatementNode::Expression {
         var_type,
-        r_value: Some((assign_op, expression)),
+        r_value: Some((assign_op, initalizer)),
     };
 
     Ok(final_var)
@@ -322,4 +359,38 @@ fn parse_function(lexer: &mut Lexer) -> Result<GlobalNode, String> {
 
 fn parse_block(lexer: &mut Lexer) -> Result<StatementNode, String> {
     todo!()
+}
+
+pub fn parse_initalizer(lexer: &mut Lexer) -> Result<InitalizerNode, String> {
+    let token = lexer.force_peek("Expected initalizer, got nothing")?;
+
+    let mut aggregate_node = None;
+    let mut expr_node = None;
+
+    match token {
+        TokenTypes::LCurlyBrace => {
+            aggregate_node = Some(parse_aggregate_init(lexer)?);
+        }
+
+        TokenTypes::Literal(_)
+        | TokenTypes::Identifier(_)
+        | TokenTypes::Keyword(KeywordTypes::Sizeof) => {
+            expr_node = Some(parse_expression(lexer, 0)?);
+        }
+
+        TokenTypes::Operator(op) if op.potential_unary() => {
+            expr_node = Some(parse_expression(lexer, 0)?);
+        }
+
+        _ => {
+            return Err(format!(
+                "Unexpected token of type {token} to start initalizer"
+            ));
+        }
+    }
+
+    Ok(InitalizerNode {
+        aggregate: aggregate_node,
+        expr: expr_node,
+    })
 }

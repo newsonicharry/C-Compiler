@@ -1,12 +1,12 @@
 use std::{
     fmt::Display,
     iter::Peekable,
-    mem,
     str::{Chars, FromStr},
 };
 
-use crate::lexer::language_features::{
-    AssignmentTypes, DataTypes, KeywordTypes, LiteralTypes, OperatorTypes,
+use crate::lexer::{
+    escape_sequences::{CharType, split_string},
+    language_features::{AssignmentTypes, DataTypes, KeywordTypes, LiteralTypes, OperatorTypes},
 };
 
 #[derive(Default, Clone, PartialEq, Eq, Debug)]
@@ -25,7 +25,28 @@ pub enum TokenTypes {
     Semicolon,
 }
 
-#[derive(Default)]
+impl Display for TokenTypes {
+    fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let final_str = &match self {
+            TokenTypes::NoToken => "empty".to_string(),
+            TokenTypes::LCurlyBrace => "left curly brace".to_string(),
+            TokenTypes::RCurlyBrace => "right curly brace".to_string(),
+            TokenTypes::Comma => "comma".to_string(),
+            TokenTypes::Semicolon => "semicolon".to_string(),
+
+            TokenTypes::Identifier(x) => format!("identifier {x}"),
+            TokenTypes::Keyword(x) => format!("keyword {x}"),
+            TokenTypes::DataType(x) => format!("datatype {x}"),
+            TokenTypes::Operator(x) => format!("operator {x}"),
+            TokenTypes::Assignment(x) => format!("assignment {x}"),
+            TokenTypes::Literal(x) => format!("literal {x}"),
+        };
+
+        write!(display, "{final_str}")
+    }
+}
+
+#[derive(Default, Debug)]
 pub struct Lexer {
     tokens: Vec<TokenTypes>,
 
@@ -34,8 +55,10 @@ pub struct Lexer {
 }
 
 impl Lexer {
-    pub fn new(input: &str) -> Lexer {
+    pub fn new(input: &str) -> Result<Lexer, String> {
         let mut lexer = Lexer::default();
+        let mut input = Self::clean_comments(input);
+        input = input.chars().filter(|x| *x != '\n').collect::<String>();
 
         let chars = &mut input.chars().peekable();
         loop {
@@ -57,18 +80,18 @@ impl Lexer {
                 '}' => push_and_skip(TokenTypes::RCurlyBrace),
 
                 '\"' => {
-                    lexer
-                        .tokens
-                        .push(Self::parse_string_literal(chars).unwrap());
+                    lexer.tokens.push(Self::parse_string_literal(chars)?);
+                }
+
+                '\'' => {
+                    lexer.tokens.push(Self::parse_char_literal(chars)?);
                 }
                 c if c.is_alphabetic() || c == '_' => {
                     lexer.tokens.push(Self::parse_keyword_or_identifier(chars));
                 }
 
                 c if c.is_numeric() => {
-                    lexer
-                        .tokens
-                        .push(Self::parse_number_literal(chars).unwrap());
+                    lexer.tokens.push(Self::parse_number_literal(chars)?);
                 }
                 c if c.is_ascii_punctuation() && c != ';' && c != '_' => {
                     lexer.tokens.push(Self::parse_symbol(chars));
@@ -79,7 +102,57 @@ impl Lexer {
             }
         }
 
-        lexer
+        Ok(lexer)
+    }
+
+    fn clean_comments(input: &str) -> String {
+        let mut final_str = String::new();
+
+        let mut all_chars = input.chars().peekable();
+        let Some(mut previous_char) = all_chars.next() else {
+            return final_str;
+        };
+
+        let mut is_single_line_comment = false;
+        let mut is_multi_line_comment = false;
+        while let Some(char) = all_chars.next() {
+            // remove comment status
+            if is_single_line_comment && char == '\n' {
+                is_single_line_comment = false;
+                previous_char = ' '; // space because we don't want statments on different lines combining
+            } else if is_multi_line_comment && (previous_char == '*' && char == '/') {
+                is_multi_line_comment = false;
+                previous_char = ' ';
+
+                // we only use a continue here because this is 2 characters and thus
+                // our current char which is a slash would become the next previous char
+                // and that would be added
+                continue;
+            }
+
+            // add comment status
+            if previous_char == '/' && char == '/' {
+                is_single_line_comment = true;
+            } else if previous_char == '/' && char == '*' {
+                is_multi_line_comment = true;
+            }
+
+            if is_single_line_comment || is_multi_line_comment {
+                previous_char = char;
+                continue; // skip characters that are in a comment
+            }
+
+            final_str.push(previous_char);
+
+            let last_item = all_chars.peek().is_none();
+            if last_item {
+                final_str.push(char);
+            }
+
+            previous_char = char;
+        }
+
+        final_str
     }
 
     fn parse_symbol(chars: &mut Peekable<Chars<'_>>) -> TokenTypes {
@@ -114,18 +187,48 @@ impl Lexer {
         return final_type;
     }
 
-    fn parse_string_literal(chars: &mut Peekable<Chars<'_>>) -> Result<TokenTypes, ()> {
+    fn parse_char_literal(chars: &mut Peekable<Chars<'_>>) -> Result<TokenTypes, String> {
+        chars.next();
+
+        let Some(mut previous_char) = chars.peek().cloned() else {
+            return Err(String::from(
+                "Character literal must have associated character",
+            ));
+        };
+
+        chars.next();
+
+        // we use a string here because escape seqeunces are multiple characters
+        let mut final_char = String::from(previous_char);
+
+        for char in chars.by_ref() {
+            // making sure the corresponding quote we find is not just an escape sequence
+            if char == '\'' && previous_char != '\\' {
+                let as_char_type = final_char.parse()?;
+                return Ok(TokenTypes::Literal(LiteralTypes::Character(as_char_type)));
+            }
+
+            final_char += &char.to_string();
+            previous_char = char;
+        }
+
+        // means that a corresponding quote does not exist, aka not valid syntax
+        Err(String::from(
+            "Char literal must end with closing single quote",
+        ))
+    }
+
+    fn parse_string_literal(chars: &mut Peekable<Chars<'_>>) -> Result<TokenTypes, String> {
         let mut previous_char = *chars.peek().unwrap();
-        let mut final_string = String::from("\"");
+        let mut final_string = String::new();
 
         chars.next();
 
         for char in chars.by_ref() {
             // making sure the corresponding quote we find is not just an escape sequence
             if char == '\"' && previous_char != '\\' {
-                return Ok(TokenTypes::Literal(LiteralTypes::String(
-                    final_string + "\"",
-                )));
+                let as_char_list = split_string(&final_string)?;
+                return Ok(TokenTypes::Literal(LiteralTypes::String(as_char_list)));
             }
 
             final_string += &char.to_string();
@@ -133,7 +236,9 @@ impl Lexer {
         }
 
         // means that a corresponding quote does not exist, aka not valid syntax
-        Err(())
+        Err(String::from(
+            "String literal must end with closing double quote",
+        ))
     }
 
     fn parse_keyword_or_identifier(chars: &mut Peekable<Chars<'_>>) -> TokenTypes {
@@ -161,7 +266,7 @@ impl Lexer {
         return TokenTypes::Identifier(final_string);
     }
 
-    fn parse_number_literal(chars: &mut Peekable<Chars<'_>>) -> Result<TokenTypes, ()> {
+    fn parse_number_literal(chars: &mut Peekable<Chars<'_>>) -> Result<TokenTypes, String> {
         let mut final_string = String::from("");
 
         while let Some(&char) = chars.peek() {
@@ -220,7 +325,11 @@ impl Lexer {
 
         match u64::from_str_radix(&final_string.to_string(), radix) {
             Ok(num) => return Ok(TokenTypes::Literal(LiteralTypes::Integer(num))),
-            Err(_) => return Err(()),
+            Err(_) => {
+                return Err(String::from(&format!(
+                    "Failed to convert number literal {final_string} with radix {radix} to integer"
+                )));
+            }
         }
     }
 
@@ -234,7 +343,9 @@ impl Lexer {
 
         enum_match(&token)
             .then_some(self.peek().unwrap())
-            .ok_or(String::from(format!("Unexpected token {:?}", token)))
+            .ok_or(String::from(format!(
+                "Got unexpected token of type {token}"
+            )))
     }
 
     pub fn expect<F>(&mut self, enum_match: F) -> Result<TokenTypes, String>
@@ -268,6 +379,14 @@ impl Lexer {
         }
 
         Some(self.tokens[self.curr_index].clone())
+    }
+
+    pub fn force_peek(&self, err_msg: &'static str) -> Result<TokenTypes, String> {
+        if self.curr_index >= self.tokens.len() {
+            return Err(err_msg.to_string());
+        }
+
+        Ok(self.tokens[self.curr_index].clone())
     }
 
     pub fn set_flag(&mut self) {
@@ -327,6 +446,7 @@ impl Display for Lexer {
                 TokenTypes::Literal(literal_type) => match literal_type {
                     LiteralTypes::String(x) => add_token("STRING", &x.to_string()),
                     LiteralTypes::Integer(x) => add_token("INTEGER", &x.to_string()),
+                    LiteralTypes::Character(x) => add_token("CHAR", &x.to_string()),
                     _ => {
                         todo!()
                     }
