@@ -1,5 +1,5 @@
 use crate::{
-    lexer::{escape_sequences::split_string, lexer::Lexer},
+    lexer::{escape_sequences::split_string, lexer::Lexer, number_parser::parse_number_literal},
     parser::{
         aggregate_init::parse_aggregate_init,
         expression_parser::parse_expression,
@@ -15,13 +15,17 @@ mod semantics;
 const EXPRESSION: &str = r#"
 
 
-{"abc", "xy"}
-    
+0xABC.DEFp10
+
+
 "#;
 
 fn main() {
     let mut lexer = Lexer::new(EXPRESSION).unwrap();
-    let aggregate = parse_aggregate_init(&mut lexer).unwrap();
 
-    println!("{aggregate}");
+    println!("{lexer}");
+
+    // let expression = parse_expression(&mut lexer, 0).unwrap();
+
+    // println!("{expression}");
 }

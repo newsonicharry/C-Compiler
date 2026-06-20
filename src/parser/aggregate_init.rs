@@ -274,37 +274,6 @@ fn parse_init_element(lexer: &mut Lexer) -> Result<AggregateInit, String> {
     Ok(aggregate_element)
 }
 
-/*
-int a[5] = {1, 2};
-int b[5] = {1, 2+1};
-char my_str[] = {'h', 'a', 'r', 'r', 'y', '\0'};
-int m[2][3] = {{1, 2, 3}, {4, 5, 6}};
-int a[10] = {[3] = 7};
-int a[10] = {
-    [0] = 1,
-    [5] = 10,
-    [9] = 20
-};
-int a[5] = {
-    [1] = 5,
-    6
-}; // {0,5,6,0,0}
-
-struct Point p = {
-    .y = 2,
-    .x = 1
-};
-struct Point p = {
-    .x = 5
-};
-struct Rect r = {
-    .tl.x = 0,
-    .tl.y = 0,
-    .br.x = 10,
-    .br.y = 10
-};
-*/
-
 #[cfg(test)]
 mod tests {
     use crate::parser::aggregate_init::parse_aggregate_init;
@@ -575,11 +544,11 @@ mod tests {
             ),
             (
                 "{.y = 5, 6}",
-                "   
+                "
                 (AggInit
                     (Member (Var y (Expr (Num 5))))
                     (InitElement (Expr (Num 6)))
-                )   
+                )
                 ",
             ),
             (
@@ -587,7 +556,7 @@ mod tests {
                 "
                 (AggInit
                     (Member (Var p (Var y (Expr (Num 5)))))
-                )                    
+                )
                 ",
             ),
             (
@@ -597,7 +566,7 @@ mod tests {
                 (AggInit
                     (Member (Var a (Var b (Var x (Expr (Num 42))))))
                     (Member (Var a (Var b (Var y (Expr (Num 32))))))
-                )                                        
+                )
                 ",
             ),
             (

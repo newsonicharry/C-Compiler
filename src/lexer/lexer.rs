@@ -7,9 +7,10 @@ use std::{
 use crate::lexer::{
     escape_sequences::{CharType, split_string},
     language_features::{AssignmentTypes, DataTypes, KeywordTypes, LiteralTypes, OperatorTypes},
+    number_parser::parse_number_literal,
 };
 
-#[derive(Default, Clone, PartialEq, Eq, Debug)]
+#[derive(Default, Clone, PartialEq, Debug)]
 pub enum TokenTypes {
     #[default]
     NoToken,
@@ -49,16 +50,16 @@ impl Display for TokenTypes {
 #[derive(Default, Debug)]
 pub struct Lexer {
     tokens: Vec<TokenTypes>,
-
     set_index: usize,
-    pub curr_index: usize,
+    curr_index: usize,
 }
 
 impl Lexer {
     pub fn new(input: &str) -> Result<Lexer, String> {
         let mut lexer = Lexer::default();
-        let mut input = Self::clean_comments(input);
-        input = input.chars().filter(|x| *x != '\n').collect::<String>();
+
+        let input = Self::clean_comments(input);
+        let input = input.split('\n').collect::<Vec<&str>>().join(" ");
 
         let chars = &mut input.chars().peekable();
         loop {
@@ -67,6 +68,8 @@ impl Lexer {
             }
 
             let char = *chars.peek().unwrap();
+            let next_char = chars.clone().nth(1);
+            let next_char_is_digit = next_char.unwrap_or(' ').is_digit(10);
 
             let mut push_and_skip = |token: TokenTypes| {
                 lexer.tokens.push(token);
@@ -90,8 +93,8 @@ impl Lexer {
                     lexer.tokens.push(Self::parse_keyword_or_identifier(chars));
                 }
 
-                c if c.is_numeric() => {
-                    lexer.tokens.push(Self::parse_number_literal(chars)?);
+                c if c.is_digit(10) || (c == '.' && next_char_is_digit) => {
+                    lexer.tokens.push(parse_number_literal(chars)?);
                 }
                 c if c.is_ascii_punctuation() && c != ';' && c != '_' => {
                     lexer.tokens.push(Self::parse_symbol(chars));
@@ -112,6 +115,11 @@ impl Lexer {
         let Some(mut previous_char) = all_chars.next() else {
             return final_str;
         };
+
+        // early return if theres only one character in the string
+        if all_chars.peek().is_none() {
+            return final_str + &previous_char.to_string();
+        }
 
         let mut is_single_line_comment = false;
         let mut is_multi_line_comment = false;
@@ -266,73 +274,6 @@ impl Lexer {
         return TokenTypes::Identifier(final_string);
     }
 
-    fn parse_number_literal(chars: &mut Peekable<Chars<'_>>) -> Result<TokenTypes, String> {
-        let mut final_string = String::from("");
-
-        while let Some(&char) = chars.peek() {
-            if char == ' ' || char.is_ascii_punctuation() {
-                break;
-            }
-
-            final_string += &chars.next().unwrap().to_string();
-        }
-
-        enum PrefixTypes {
-            Decimal,
-            Hexadecimal,
-            Octal,
-            Binary,
-        }
-
-        let mut prefix_type = PrefixTypes::Decimal;
-
-        if final_string.starts_with('0') {
-            if let Some(next_char) = final_string.chars().nth(1) {
-                match next_char {
-                    'b' | 'B' => prefix_type = PrefixTypes::Binary,
-                    'x' | 'X' => prefix_type = PrefixTypes::Hexadecimal,
-                    _ => prefix_type = PrefixTypes::Octal,
-                }
-            }
-        }
-
-        let radix: u32;
-
-        match prefix_type {
-            PrefixTypes::Hexadecimal => {
-                final_string = final_string
-                    .to_lowercase()
-                    .trim_start_matches("0x")
-                    .to_string();
-                radix = 16;
-            }
-
-            PrefixTypes::Binary => {
-                final_string = final_string
-                    .to_lowercase()
-                    .trim_start_matches("0b")
-                    .to_string();
-                radix = 2;
-            }
-
-            PrefixTypes::Octal => {
-                final_string.remove(0);
-                radix = 8;
-            }
-
-            PrefixTypes::Decimal => radix = 10,
-        }
-
-        match u64::from_str_radix(&final_string.to_string(), radix) {
-            Ok(num) => return Ok(TokenTypes::Literal(LiteralTypes::Integer(num))),
-            Err(_) => {
-                return Err(String::from(&format!(
-                    "Failed to convert number literal {final_string} with radix {radix} to integer"
-                )));
-            }
-        }
-    }
-
     pub fn check<F>(&mut self, enum_match: F) -> Result<TokenTypes, String>
     where
         F: Fn(&TokenTypes) -> bool,
@@ -446,10 +387,8 @@ impl Display for Lexer {
                 TokenTypes::Literal(literal_type) => match literal_type {
                     LiteralTypes::String(x) => add_token("STRING", &x.to_string()),
                     LiteralTypes::Integer(x) => add_token("INTEGER", &x.to_string()),
+                    LiteralTypes::Float(x) => add_token("FLOAT", &x.to_string()),
                     LiteralTypes::Character(x) => add_token("CHAR", &x.to_string()),
-                    _ => {
-                        todo!()
-                    }
                 },
 
                 TokenTypes::Semicolon => add_token("SEMICOLON", ";"),

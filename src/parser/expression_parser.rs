@@ -2,6 +2,7 @@ use crate::lexer::escape_sequences::CharType;
 use crate::lexer::language_features::LiteralTypes;
 use crate::lexer::language_features::OperatorTypes;
 use crate::lexer::lexer::{Lexer, TokenTypes};
+use crate::lexer::number_parser::IntType;
 use std::fmt::Display;
 use std::fmt::format;
 
@@ -13,8 +14,8 @@ pub enum ExprNode {
         operator: OperatorTypes,
         right: Box<ExprNode>,
     },
-    Number {
-        num: u64,
+    Integer {
+        num: IntType,
     },
     Identifier {
         identifier: String,
@@ -78,7 +79,7 @@ impl ExprNode {
                 ));
             }
 
-            Self::Number { num } => {
+            Self::Integer { num } => {
                 output.push_str(&format!("{indent_str}(Num {num})"));
             }
 
@@ -241,7 +242,7 @@ fn parse_primary(lexer: &mut Lexer) -> Result<ExprNode, String> {
             TokenTypes::Literal(literal_type) => match literal_type {
                 LiteralTypes::Integer(x) => {
                     lexer.advance();
-                    return Ok(ExprNode::Number { num: x });
+                    return Ok(ExprNode::Integer { num: x });
                 }
                 LiteralTypes::Character(x) => {
                     lexer.advance();
@@ -269,4 +270,37 @@ fn parse_primary(lexer: &mut Lexer) -> Result<ExprNode, String> {
     Err(String::from(
         "Next token must be a literal, operator or identifier",
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::expression_parser::{ExprNode, parse_expression};
+    use crate::parser::helper::run_tests;
+
+    fn parse_expression_generic(lexer: &mut Lexer) -> Result<ExprNode, String> {
+        parse_expression(lexer, 0)
+    }
+
+    #[test]
+    fn expression_primary() {
+        let test_cases = vec![
+            (r#"x"#, "(Var x)"),
+            (r#"a123"#, "(Var a123)"),
+            (r#"123"#, "(Num 123)"),
+            (r#"0"#, "(Num 0)"),
+            (r#"077"#, "(Num 63)"), // this is octal
+            (r#"0xFF"#, "(Num 255)"),
+            // (r#"3.14"#, ""),
+            // (r#"1e10"#, ""),
+            // (r#"'a'"#, ""),
+            // (r#"'\n'"#, ""),
+            // (r#""hello""#, ""),
+            // (r#"(a)"#, ""),
+            // (r#"((a))"#, ""),
+            // (r#"(((a)))"#, ""),
+        ];
+
+        run_tests(parse_expression_generic, test_cases);
+    }
 }

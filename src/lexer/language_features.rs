@@ -1,6 +1,9 @@
 use std::{fmt::Display, str::FromStr};
 
-use crate::lexer::escape_sequences::{CharList, CharType};
+use crate::lexer::{
+    escape_sequences::{CharList, CharType},
+    number_parser::{FloatType, IntType},
+};
 
 macro_rules! impl_from_str_for_enum {
     ($name:ty) => {
@@ -315,10 +318,10 @@ impl OperatorTypes {
 impl_from_str_for_enum!(OperatorTypes);
 impl_display_for_enum!(OperatorTypes);
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum LiteralTypes {
-    Float(i64, u32), // integer and shift
-    Integer(u64),
+    Float(FloatType),
+    Integer(IntType),
     String(CharList),
     Character(CharType),
 }
@@ -328,11 +331,11 @@ impl Display for LiteralTypes {
         let output;
 
         match self {
-            Self::Integer(x) => output = x.to_string(),
             Self::String(x) => output = x.to_string(),
             Self::Character(x) => output = x.to_string(),
 
-            Self::Float(base, exponent) => output = base.pow(*exponent).to_string(),
+            Self::Integer(x) => output = x.to_string(),
+            Self::Float(x) => output = x.to_string(),
         }
 
         write!(display, "{output}")

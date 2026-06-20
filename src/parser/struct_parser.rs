@@ -122,7 +122,7 @@ fn parse_struct_definition(lexer: &mut Lexer, name: &Option<String>) -> Result<S
             lexer.advance();
 
             bit_field = Some(lexer.expect_extract(|x| match x {
-                TokenTypes::Literal(LiteralTypes::Integer(integer)) => Some(integer),
+                TokenTypes::Literal(LiteralTypes::Integer(integer)) => Some(integer.value as u64),
                 _ => None,
             })?);
         }
