@@ -216,19 +216,6 @@ impl Display for TypeNode {
     }
 }
 
-pub fn parse_types(lexer: &mut Lexer) -> Result<Vec<TypeNode>, String> {
-    todo!();
-    let inital_type = parse_type(lexer)?;
-
-    let Some(next_token) = lexer.peek() else {
-        return Err(String::from("Expected token after type, got nothing"));
-    };
-
-    // if next_token == TokenTypes::Comma {
-    // while
-    // }
-}
-
 pub fn parse_type(lexer: &mut Lexer) -> Result<TypeNode, String> {
     // temporary of the inner most type
     let mut final_type = TypeNode::Empty;
@@ -341,17 +328,27 @@ pub fn parse_parameter_list(lexer: &mut Lexer) -> Result<Vec<TypeNode>, String> 
         lexer.peek(),
         Some(TokenTypes::Operator(OperatorTypes::RParen))
     ) {
-        if matches!(lexer.peek(), Some(TokenTypes::Comma)) {
+        if matches!(
+            lexer.peek(),
+            Some(TokenTypes::Operator(OperatorTypes::Comma))
+        ) {
             return Err(String::from("Unexpected comma in parameter list"));
         }
 
         param_list.push(parse_type(lexer)?);
-        println!("{:?}", param_list);
+
         verify_next_in_comma_list(
             lexer,
             TokenTypes::Operator(OperatorTypes::RParen),
             "Unexpected end to parameter list",
         )?;
+
+        if matches!(
+            lexer.peek(),
+            Some(TokenTypes::Operator(OperatorTypes::Comma))
+        ) {
+            lexer.advance();
+        }
     }
     lexer.advance();
     Ok(param_list)

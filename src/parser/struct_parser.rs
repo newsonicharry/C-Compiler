@@ -170,7 +170,10 @@ fn parse_vars_from_struct(
     let mut defined_vars = Vec::new();
 
     while !matches!(lexer.peek(), Some(TokenTypes::Semicolon)) {
-        if matches!(lexer.peek(), Some(TokenTypes::Comma)) {
+        if matches!(
+            lexer.peek(),
+            Some(TokenTypes::Operator(OperatorTypes::Comma))
+        ) {
             return Err(String::from("Unexpected comma after struct definition"));
         }
 

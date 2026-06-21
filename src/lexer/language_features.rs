@@ -195,6 +195,8 @@ impl_display_for_enum!(AssignmentTypes);
 pub enum OperatorTypes {
     #[default]
     NoOperator,
+
+    Comma,
     // regular expression operators
     Divide,
     Modulus,
@@ -236,8 +238,9 @@ pub enum OperatorTypes {
 }
 
 impl OperatorTypes {
-    const MAPPINGS: &'static [(&'static str, Self); 30] = &[
+    const MAPPINGS: &'static [(&'static str, Self); 31] = &[
         ("(UNKNOWN)", Self::NoOperator),
+        (",", Self::Comma),
         ("*", Self::Star),
         ("/", Self::Divide),
         ("%", Self::Modulus),

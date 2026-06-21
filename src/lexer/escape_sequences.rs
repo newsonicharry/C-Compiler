@@ -61,31 +61,57 @@ impl FromStr for CharType {
             final_value |= (char.get_value() << shift) as u32;
         }
 
+        // if this number repersents a special value (such as a newline) use that specific enum
+        let found_self = Self::MAPPINGS
+            .iter()
+            .find(|(x, _)| *x == final_value)
+            .map(|(_, x)| x);
+
+        if let Some(special_type) = found_self.cloned() {
+            return Ok(special_type);
+        }
+
+        // otherwise just give it a generic char value
         Ok(Self::Char { value: final_value })
     }
 }
 
 impl CharType {
-    fn get_value(&self) -> u64 {
-        match &self {
-            CharType::SingleQuote => 39,
-            CharType::DoubleQuote => 34,
-            CharType::QuestionMark => 63,
-            CharType::Backslash => 92,
-            CharType::Alert => 7,
-            CharType::Backspace => 8,
-            CharType::FormFeed => 12,
-            CharType::NewLine => 10,
-            CharType::CarriageReturn => 13,
-            CharType::HorizontalTab => 9,
-            CharType::VerticalTab => 11,
+    const MAPPINGS: &'static [(u32, Self); 11] = &[
+        (39, CharType::SingleQuote),
+        (34, CharType::DoubleQuote),
+        (63, CharType::QuestionMark),
+        (92, CharType::Backslash),
+        (7, CharType::Alert),
+        (8, CharType::Backspace),
+        (12, CharType::FormFeed),
+        (10, CharType::NewLine),
+        (13, CharType::CarriageReturn),
+        (9, CharType::HorizontalTab),
+        (11, CharType::VerticalTab),
+    ];
 
+    fn get_value(&self) -> u64 {
+        let found_value = Self::MAPPINGS
+            .iter()
+            .find(|(_, x)| x == self)
+            .map(|(x, _)| x);
+
+        if let Some(value) = found_value.cloned() {
+            return value as u64;
+        }
+
+        match &self {
             CharType::Char { value }
             | CharType::Octal { value }
             | CharType::SmallUnicode { value }
             | CharType::LargeUnicode { value } => *value as u64,
 
             CharType::Hex { value } => *value,
+
+            _ => {
+                unreachable!()
+            }
         }
     }
 }

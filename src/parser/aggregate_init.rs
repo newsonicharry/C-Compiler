@@ -173,7 +173,7 @@ fn parse_string_initalization(lexer: &mut Lexer) -> Result<AggregateInit, String
 
     let next_token =
         lexer.force_peek("Unexpected end to string parsing in aggregate initalization")?;
-    if matches!(next_token, TokenTypes::Comma) {
+    if matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma)) {
         lexer.advance();
     }
 
@@ -206,7 +206,9 @@ fn parse_aggregate_member(lexer: &mut Lexer) -> Result<AggregateInit, String> {
     }
 
     let next_token = lexer.force_peek("Unexpected end to aggregate member initalization")?;
-    if !matches!(next_token, TokenTypes::Comma) && !matches!(next_token, TokenTypes::RCurlyBrace) {
+    if !matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma))
+        && !matches!(next_token, TokenTypes::RCurlyBrace)
+    {
         return Err(format!(
             "Unexpected next token of type {next_token}, expected comma or right curly brace"
         ));
@@ -225,7 +227,7 @@ fn parse_nested_aggregate(lexer: &mut Lexer) -> Result<AggregateInit, String> {
 
     let next_token = lexer.force_peek("Unexpected end to aggregate member initalization")?;
 
-    if matches!(next_token, TokenTypes::Comma) {
+    if matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma)) {
         lexer.advance();
     }
 
@@ -246,7 +248,7 @@ fn parse_designator_element(lexer: &mut Lexer) -> Result<AggregateInit, String> 
 
     let next_token = lexer.force_peek("Expected end of aggregate designator, got nothing")?;
 
-    if matches!(next_token, TokenTypes::Comma) {
+    if matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma)) {
         lexer.advance();
     }
 
@@ -261,13 +263,15 @@ fn parse_init_element(lexer: &mut Lexer) -> Result<AggregateInit, String> {
 
     let next_token = lexer.force_peek("Expected next token in aggregate initalization")?;
 
-    if !matches!(next_token, TokenTypes::Comma) && !matches!(next_token, TokenTypes::RCurlyBrace) {
+    if !matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma))
+        && !matches!(next_token, TokenTypes::RCurlyBrace)
+    {
         return Err(format!(
             "Unexpected next token of type {next_token}, expected comma or right curly brace"
         ));
     }
 
-    if matches!(next_token, TokenTypes::Comma) {
+    if matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma)) {
         lexer.advance();
     }
 

@@ -1,3 +1,4 @@
+use crate::lexer::language_features::OperatorTypes;
 use crate::lexer::lexer::{Lexer, TokenTypes};
 use std::fmt::Display;
 
@@ -40,11 +41,14 @@ pub fn verify_next_in_comma_list(
         && token != end_token
     {
         let Some(future_token) = lexer.forward_peek() else {
-            return Err(String::from(error_message));
+            lexer.check(|x| x == &end_token)?;
+            return Ok(());
         };
 
         if future_token != end_token {
-            lexer.expect(|x| matches!(x, TokenTypes::Comma))?;
+            lexer.check(|x| matches!(x, TokenTypes::Operator(OperatorTypes::Comma)))?;
+        } else {
+            return Err(String::from(error_message));
         }
     } else if lexer.peek().is_none() {
         return Err(String::from(error_message));

@@ -22,7 +22,6 @@ pub enum TokenTypes {
     Assignment(AssignmentTypes),
     LCurlyBrace,
     RCurlyBrace,
-    Comma,
     Semicolon,
 }
 
@@ -32,7 +31,6 @@ impl Display for TokenTypes {
             TokenTypes::NoToken => "empty".to_string(),
             TokenTypes::LCurlyBrace => "left curly brace".to_string(),
             TokenTypes::RCurlyBrace => "right curly brace".to_string(),
-            TokenTypes::Comma => "comma".to_string(),
             TokenTypes::Semicolon => "semicolon".to_string(),
 
             TokenTypes::Identifier(x) => format!("identifier {x}"),
@@ -78,7 +76,6 @@ impl Lexer {
 
             match char {
                 ';' => push_and_skip(TokenTypes::Semicolon),
-                ',' => push_and_skip(TokenTypes::Comma),
                 '{' => push_and_skip(TokenTypes::LCurlyBrace),
                 '}' => push_and_skip(TokenTypes::RCurlyBrace),
 
@@ -373,7 +370,7 @@ impl Display for Lexer {
         let mut output = String::new();
 
         let mut add_token = |name: &str, value: &str| {
-            output.push_str(&(String::from("[") + name + ": " + value + "]\n"))
+            output.push_str(&(String::from("[") + name + ": " + value + " ]\n"))
         };
 
         for token in self.get_tokens() {
@@ -394,7 +391,6 @@ impl Display for Lexer {
                 TokenTypes::Semicolon => add_token("SEMICOLON", ";"),
                 TokenTypes::LCurlyBrace => add_token("LCURLYBRACE", "{"),
                 TokenTypes::RCurlyBrace => add_token("RCURLYBRACE", "}"),
-                TokenTypes::Comma => add_token("COMMA", ","),
                 TokenTypes::NoToken => add_token("(NO TOKEN)", "<WARNING NO TOKEN> "),
             }
         }
