@@ -61,6 +61,23 @@ pub enum TypeNode {
 }
 
 impl TypeNode {
+    pub fn error_if_not_variable(&self) -> Result<(), String> {
+        match self {
+            Self::Variable { .. } => Ok(()),
+            _ => Err(String::from("Type must be a variable")),
+        }
+    }
+
+    pub fn change_var_name(&mut self, new_name: &str) -> Result<(), String> {
+        let Self::Variable { name, .. } = self else {
+            return Err(String::from("Type must be a variable"));
+        };
+
+        *name = new_name.to_string();
+
+        Ok(())
+    }
+
     // gotta love the rust borrow checker making me write this
     pub fn get_most_nested_layer(&mut self) -> &mut TypeNode {
         let should_recurse = match self {
@@ -374,7 +391,7 @@ fn parse_normal_type(lexer: &mut Lexer) -> Result<TypeNode, String> {
     let mut qualifiers: Vec<DataTypes> = Vec::new();
 
     while let Some(token) = lexer.peek()
-        && matches!(token, TokenTypes::DataType(_))
+        && (matches!(token, TokenTypes::DataType(_)))
     {
         let TokenTypes::DataType(data_type) = token else {
             unreachable!()

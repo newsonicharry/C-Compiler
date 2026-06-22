@@ -1,7 +1,8 @@
 use crate::lexer::language_features::AssignmentTypes;
-use crate::lexer::language_features::LiteralTypes;
 use crate::lexer::language_features::OperatorTypes;
+use crate::lexer::language_features::{KeywordTypes, LiteralTypes};
 use crate::lexer::lexer::{Lexer, TokenTypes};
+use crate::parser::expression_parser::parse_expression;
 use crate::parser::helper::verify_next_in_comma_list;
 use crate::parser::parser::{GlobalNode, StatementNode};
 use crate::parser::type_parser::{TypeNode, is_valid_var_name, parse_type};
@@ -13,127 +14,260 @@ pub struct Struct {
     pub members: Vec<StructMember>,
 }
 
-pub struct StructMember {
-    pub item_type: TypeNode,
-    pub bit_field: Option<u64>,
-}
+impl Struct {
+    pub fn display(&self, indentation: usize) -> String {
+        let mut output = String::new();
 
-impl Display for StructMember {
-    fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut output = String::from(&format!("(Member {}", self.item_type));
+        let indent_str = " ".repeat(indentation);
 
-        if let Some(bitfield) = self.bit_field {
-            output.push_str(&format!("( Bitfield {})", bitfield.to_string()));
+        output.push_str(&format!("{indent_str}(Struct"));
+
+        if let Some(name) = self.name.clone() {
+            output.push_str(&format!(" {name}"));
+        }
+
+        if self.is_defined {
+            output.push_str(&format!(" (Members"));
+
+            for member in &self.members {
+                output.push_str(&format!("\n{}", member.display(indentation + 2)));
+            }
+
+            if !self.members.is_empty() {
+                output.push_str(&format!("\n{indent_str}"));
+            }
+            output.push_str(")");
         }
 
         output.push_str(")");
 
-        write!(display, "{output}")
+        output
     }
+}
+
+enum StructMember {
+    NormalType {
+        item_type: TypeNode,
+        bit_field: Option<u64>,
+    },
+    DefinedStruct {
+        defined: Struct,
+    },
+}
+
+impl StructMember {
+    pub fn display(&self, indentation: usize) -> String {
+        let mut output = String::new();
+
+        let indent_str = " ".repeat(indentation);
+        if let StructMember::NormalType {
+            item_type,
+            bit_field,
+        } = self
+        {
+            output += &format!("{indent_str}(Member {}", item_type);
+
+            if let Some(bitfield) = bit_field {
+                output.push_str(&format!("(Bitfield {})", bitfield.to_string()));
+            }
+        }
+
+        if let StructMember::DefinedStruct { defined } = self {
+            output += &format!("{}", defined.display(indentation));
+        }
+
+        output.push_str(")");
+
+        output
+    }
+}
+
+#[derive(Debug)]
+enum StructKeywordUsage {
+    Definition,
+    Declaration,
+    Variable,
+}
+
+fn struct_keyword_usage(lexer: &mut Lexer) -> Result<StructKeywordUsage, String> {
+    lexer.set_flag();
+
+    lexer.advance(); // move past the struct keyword
+
+    // Move past the struct name if it exists
+    if let Some(TokenTypes::Identifier(_)) = lexer.peek() {
+        lexer.next();
+    }
+
+    let next_token = lexer.force_peek("Expected next token in struct definition, got nothing")?;
+
+    // make sure we don't mess up the parsing for our parsing functions
+    lexer.recede_to_flag();
+
+    // if its a variable
+    // includes left parenthesis and start because it could be a function pointer or pointer
+    if matches!(next_token, TokenTypes::Identifier(_))
+        || matches!(next_token, TokenTypes::Operator(OperatorTypes::LParen))
+        || matches!(next_token, TokenTypes::Operator(OperatorTypes::Star))
+    {
+        return Ok(StructKeywordUsage::Variable);
+    }
+
+    if matches!(next_token, TokenTypes::LCurlyBrace) {
+        return Ok(StructKeywordUsage::Definition);
+    }
+
+    if matches!(next_token, TokenTypes::Semicolon) {
+        return Ok(StructKeywordUsage::Declaration);
+    }
+
+    Err(String::from(&format!(
+        "Unexpected next token {next_token}, expected struct variable, struct definition or struct declaration",
+    )))
 }
 
 // struct definition / declaration
 // struct definition and objects
 // variable definition/definition of type struct
 pub fn parse_struct_keyword(lexer: &mut Lexer) -> Result<Vec<GlobalNode>, String> {
-    lexer.advance(); // move past the "struct"
+    let usage = struct_keyword_usage(lexer)?;
+    println!("{:?}", usage);
 
-    let mut struct_name = None;
+    if matches!(usage, StructKeywordUsage::Variable) {
+        let vars = parse_struct_var(lexer)?;
 
-    if let Some(TokenTypes::Identifier(name)) = lexer.peek() {
-        struct_name = Some(name);
-        lexer.next();
+        let vars = vars
+            .iter()
+            .map(|x| GlobalNode::Variable {
+                expr_statement: x.clone(),
+            })
+            .collect::<Vec<GlobalNode>>();
+
+        return Ok(vars);
     }
 
-    // if its a variable
-    if matches!(lexer.peek(), Some(TokenTypes::Identifier(_))) {
-        let final_var = parse_struct_var(lexer, &struct_name)?;
-
-        let final_var = GlobalNode::Variable {
-            expr_statement: final_var,
-        };
-
-        return Ok(vec![final_var]);
-    }
-
-    // if its a definition (could have objects defined after it)
-    if matches!(lexer.peek(), Some(TokenTypes::LCurlyBrace)) {
+    if matches!(usage, StructKeywordUsage::Definition) {
         let mut struct_and_vars = Vec::new();
 
-        let defined_struct = parse_struct_definition(lexer, &struct_name)?;
+        let defined_struct = parse_struct_definition(lexer)?;
+        let struct_name = defined_struct.name.clone();
 
         struct_and_vars.push(GlobalNode::Struct {
             data: defined_struct,
         });
 
         if matches!(lexer.peek(), Some(TokenTypes::Identifier(_))) {
-            struct_and_vars.extend(
-                parse_vars_from_struct(lexer, &struct_name)?
-                    .iter()
-                    .map(|x| GlobalNode::Variable {
-                        expr_statement: x.clone(),
-                    }),
-            );
+            // struct_and_vars.extend(
+            //     parse_vars_from_struct(lexer, &struct_name)?
+            //         .iter()
+            //         .map(|x| GlobalNode::Variable {
+            //             expr_statement: x.clone(),
+            //         }),
+            // );
         }
-
-        lexer.expect(|x| matches!(x, TokenTypes::Semicolon))?;
 
         return Ok(struct_and_vars);
     }
 
     // if its a declaration
-    if matches!(lexer.peek(), Some(TokenTypes::Semicolon)) {
-        lexer.advance();
-        let declared_struct = Struct {
-            is_defined: false,
-            name: struct_name,
-            members: vec![],
-        };
-
+    if matches!(usage, StructKeywordUsage::Declaration) {
         return Ok(vec![GlobalNode::Struct {
-            data: declared_struct,
+            data: parse_struct_declaration(lexer),
         }]);
     }
 
-    Err(String::from(&format!(
-        "Unexpected next token {:?}, expected ",
-        lexer.peek()
-    )))
+    unreachable!()
+}
+
+fn parse_struct_member(lexer: &mut Lexer) -> Result<StructMember, String> {
+    if matches!(
+        lexer.peek(),
+        Some(TokenTypes::Keyword(KeywordTypes::Struct))
+    ) {
+        let usage = struct_keyword_usage(lexer)?;
+
+        match usage {
+            StructKeywordUsage::Definition => {
+                return Ok(StructMember::DefinedStruct {
+                    defined: parse_struct_definition(lexer)?,
+                });
+            }
+
+            StructKeywordUsage::Declaration => {
+                return Ok(StructMember::DefinedStruct {
+                    defined: parse_struct_declaration(lexer),
+                });
+            }
+
+            StructKeywordUsage::Variable => {}
+        }
+    }
+
+    let member = parse_type(lexer)?;
+
+    let Some(next_token) = lexer.peek() else {
+        return Err(String::from(
+            "Expected either a semicolon or colon at the end of struct member, got nothing",
+        ));
+    };
+
+    let mut bit_field = None;
+
+    if matches!(next_token, TokenTypes::Operator(OperatorTypes::Colon)) {
+        lexer.advance();
+
+        bit_field = Some(lexer.expect_extract(|x| match x {
+            TokenTypes::Literal(LiteralTypes::Integer(integer)) => Some(integer.value as u64),
+            _ => None,
+        })?);
+    }
+
+    lexer.expect(|x| matches!(x, TokenTypes::Semicolon))?;
+
+    let final_member = StructMember::NormalType {
+        item_type: member,
+        bit_field,
+    };
+
+    Ok(final_member)
+}
+
+fn parse_struct_declaration(lexer: &mut Lexer) -> Struct {
+    lexer.advance();
+
+    let Some(TokenTypes::Identifier(struct_name)) = lexer.peek() else {
+        unreachable!()
+    };
+
+    lexer.advance();
+
+    let declared_struct = Struct {
+        is_defined: false,
+        name: Some(struct_name),
+        members: vec![],
+    };
+
+    declared_struct
 }
 
 // definition parsing
-fn parse_struct_definition(lexer: &mut Lexer, name: &Option<String>) -> Result<Struct, String> {
-    let mut members = Vec::new();
+fn parse_struct_definition(lexer: &mut Lexer) -> Result<Struct, String> {
+    lexer.advance(); // move past the struct
 
-    lexer.advance(); // move past the left curly brace
+    let name = match lexer.peek() {
+        Some(TokenTypes::Identifier(name)) => {
+            lexer.advance();
+            Some(name)
+        }
+        _ => None,
+    };
+
+    lexer.advance();
+
+    let mut members = Vec::new(); // literally everything else including regular struct variables
 
     while !matches!(lexer.peek(), Some(TokenTypes::RCurlyBrace)) {
-        let member = parse_type(lexer)?;
-
-        let Some(next_token) = lexer.peek() else {
-            return Err(String::from(
-                "Expected either a semicolon or colon at the end of struct member, got nothing",
-            ));
-        };
-
-        let mut bit_field = None;
-
-        if matches!(next_token, TokenTypes::Operator(OperatorTypes::Colon)) {
-            lexer.advance();
-
-            bit_field = Some(lexer.expect_extract(|x| match x {
-                TokenTypes::Literal(LiteralTypes::Integer(integer)) => Some(integer.value as u64),
-                _ => None,
-            })?);
-        }
-
-        lexer.expect(|x| matches!(x, TokenTypes::Semicolon))?;
-
-        let final_member = StructMember {
-            item_type: member,
-            bit_field,
-        };
-
+        let final_member = parse_struct_member(lexer)?;
         members.push(final_member);
     }
 
@@ -148,123 +282,113 @@ fn parse_struct_definition(lexer: &mut Lexer, name: &Option<String>) -> Result<S
     Ok(final_struct)
 }
 
-// check for defined objects in the struct
-fn parse_vars_from_struct(
-    lexer: &mut Lexer,
-    struct_name: &Option<String>,
-) -> Result<Vec<StatementNode>, String> {
-    match lexer.peek() {
-        Some(TokenTypes::Identifier(_)) => {}
-
-        Some(TokenTypes::Semicolon) => {
-            return Ok(vec![]);
-        }
-
-        _ => {
-            return Err(String::from(
-                "Struct definition must end in a semicolon or define a variable",
-            ));
-        }
-    }
-
-    let mut defined_vars = Vec::new();
-
-    while !matches!(lexer.peek(), Some(TokenTypes::Semicolon)) {
-        if matches!(
-            lexer.peek(),
-            Some(TokenTypes::Operator(OperatorTypes::Comma))
-        ) {
-            return Err(String::from("Unexpected comma after struct definition"));
-        }
-
-        let var_name = lexer.expect_extract(|x| match x {
-            TokenTypes::Identifier(var) => Some(var),
-            _ => None,
-        })?;
-
-        if !is_valid_var_name(&var_name) {
-            return Err(String::from("Variable does not have a valid variable name"));
-        }
-
-        let variable_type = TypeNode::Variable {
-            name: var_name,
-            held_value: Box::new(TypeNode::Struct {
-                name: struct_name.clone(),
-                qualifiers: vec![],
-            }),
-        };
-
-        defined_vars.push(StatementNode::Expression {
-            var_type: variable_type,
-            r_value: None,
-        });
-
-        verify_next_in_comma_list(
-            lexer,
-            TokenTypes::Semicolon,
-            "Unexpected end to variable definitions after struct definition",
-        )?;
-    }
-
-    Ok(defined_vars)
-}
-
 // variable parsing
 
 fn parse_struct_var(
     lexer: &mut Lexer,
-    struct_name: &Option<String>,
-) -> Result<StatementNode, String> {
-    let variable_name = lexer.expect_extract(|x| match x {
-        TokenTypes::Identifier(var_name) => Some(var_name),
-        _ => None,
-    })?;
+    // struct_name: &Option<String>,
+) -> Result<Vec<StatementNode>, String> {
+    // fn update_var(final_type: &mut TypeNode, lexer: &mut Lexer) -> Result<(), String> {
+    //     let var_name = lexer.expect_extract(|x| match x {
+    //         TokenTypes::Identifier(var_name) => Some(var_name),
+    //         _ => None,
+    //     })?;
+    //     final_type.change_var_name(&var_name)?;
+    //     Ok(())
+    // }
 
-    let Some(next_token) = lexer.peek() else {
-        return Err(String::from(
-            "Expected end of struct variable declaration, got nothing",
-        ));
-    };
+    // let mut final_type;
 
-    let final_type = TypeNode::Variable {
-        name: variable_name,
-        held_value: Box::new(TypeNode::Struct {
-            name: struct_name.clone(),
-            qualifiers: vec![],
-        }),
-    };
+    // match struct_name {
+    //     Some(name) => {
+    //         final_type = TypeNode::Variable {
+    //             name: String::new(),
+    //             held_value: TypeNode::Struct {
+    //                 name,
+    //                 qualifiers: vec![],
+    //             },
+    //         };
+    //     }
 
-    if next_token == TokenTypes::Semicolon {
-        let final_var = StatementNode::Expression {
-            var_type: final_type,
-            r_value: None,
+    //     None => final_type = parse_type(lexer)?,
+    // }
+
+    let mut final_type = parse_type(lexer)?;
+
+    final_type.error_if_not_variable()?;
+
+    let mut all_vars = Vec::new();
+
+    loop {
+        let Some(next_token) = lexer.peek() else {
+            return Err(String::from(
+                "Expected end of struct variable declaration, got nothing",
+            ));
         };
 
-        return Ok(final_var);
-    }
+        // early exit if the last var is a declaration
+        if next_token == TokenTypes::Semicolon {
+            let final_var = StatementNode::Expression {
+                var_type: final_type.clone(),
+                r_value: None,
+            };
 
-    // should be an assignment
-    lexer.expect(|x| matches!(x, TokenTypes::Assignment(AssignmentTypes::SimpleAssignment)))?;
+            all_vars.push(final_var);
+            break;
+        }
 
-    let Some(next_token) = lexer.peek() else {
-        return Err(String::from(
-            "Expected struct variable definition after assingment, got nothing",
+        let next_token = lexer.force_peek("Unexpected end of variable definition, got nothing")?;
+        let final_var;
+
+        // its a definition
+        if matches!(
+            next_token,
+            TokenTypes::Assignment(AssignmentTypes::SimpleAssignment)
+        ) {
+            lexer.advance();
+
+            final_var = StatementNode::Expression {
+                var_type: final_type.clone(),
+                r_value: Some(parse_expression(lexer, 3)?),
+            };
+        }
+        // its a declaration
+        else {
+            final_var = StatementNode::Expression {
+                var_type: final_type.clone(),
+                r_value: None,
+            };
+        }
+
+        all_vars.push(final_var);
+
+        let next_token = lexer.force_peek("Expected end of variable definition, got nothing")?;
+
+        // Could be another variable assigned after the original one
+        if matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma)) {
+            lexer.advance();
+            let var_name = lexer.expect_extract(|x| match x {
+                TokenTypes::Identifier(var_name) => Some(var_name),
+                _ => None,
+            })?;
+            final_type.change_var_name(&var_name)?;
+            continue;
+        }
+
+        if matches!(next_token, TokenTypes::Semicolon) {
+            break;
+        }
+
+        // Variable assignment can only end wiht a comma or semi colon
+        return Err(format!(
+            "Expected comma or semicolon after variable definition, got token of type {next_token}"
         ));
-    };
-
-    if next_token == TokenTypes::LCurlyBrace {
-        todo!()
-        // let assigned_to = parse_aggregate_init(lexer)?;
-
-        // let final_var = StatementNode::Expression {
-        //     var_type: final_type,
-        //     r_value: Some((AssignmentTypes::SimpleAssignment, assigned_to)),
-        // };
-
-        // return Ok(final_var);
     }
 
-    todo!()
+    lexer.expect(|x| matches!(x, TokenTypes::Semicolon))?;
+
+    // todo!()
+    Ok(all_vars)
 }
 
 /*
@@ -281,31 +405,6 @@ struct Point{
 
 };
 
-#Initialization
-struct Point p = {1, 2};
-struct Point p = {.x = 1, .y = 2};
-struct Point p = (struct Point){1, 2};
-
-# Additional variables in the same declaration
-struct Point p, q;
-struct Point p = {1,2}, q = {3,4};
-int x = 10, y = 20;
-
-#Arrays
-struct Point p[] = {{1,2}, {3,4}};
-
-#Function declarations
-struct Point p(void);
-struct Point p(int);
-struct Point p(int, char *);
-
-#Typedef declarations
-typedef struct Point p;
-
-#Struct member access or assignment
-p = q;
-p.x = 1;
-
 */
 
 #[cfg(test)]
@@ -314,7 +413,7 @@ mod tests {
     use crate::parser::parser::parse_program;
 
     #[test]
-    fn test_struct_creation() {
+    fn struct_creation() {
         let test_cases = vec![
             ("struct Point;", "(Struct Point)"),
             ("struct {};", "(Struct (Members))"),
@@ -339,6 +438,101 @@ mod tests {
                   (Member (Name x (Type int)) (Bitfield 3))
                   (Member (Name y (Type int)) (Bitfield 2))
                 ))",
+            ),
+        ];
+
+        run_tests(parse_program, test_cases);
+    }
+
+    #[test]
+    fn struct_var() {
+        let test_cases = vec![
+            (r#"struct Person p;"#, "(Variable (Name p (Struct Person)))"),
+            (
+                r#"struct Person p = {"Bob", 25};"#,
+                "
+                (Variable (Name p (Struct Person)) (AggInit
+                        (AggInit
+                            (InitElement (Expr (Char B)))
+                            (InitElement (Expr (Char o)))
+                            (InitElement (Expr (Char b)))
+                            (InitElement (Expr (Char \\0)))
+                        )
+                        (InitElement (Expr (Num 25)))
+                ))
+                    
+                ",
+            ),
+            (
+                r#"struct Person p = {.name = "Bob", .age = 25};"#,
+                "
+                (Variable (Name p (Struct Person)) (AggInit
+                        (Member (Var name (Expr (Str Bob))))
+                        (Member (Var age (Expr (Num 25))))
+                ))
+                ",
+            ),
+            (
+                r#"struct Person p = (struct Person){"Bob", 25};"#,
+                "
+                (Variable (Name p (Struct Person)) (Cast (Struct Person)
+                    (AggInit
+                        (AggInit
+                            (InitElement (Expr (Char B)))
+                            (InitElement (Expr (Char o)))
+                            (InitElement (Expr (Char b)))
+                            (InitElement (Expr (Char \\0)))
+                        )
+                        (InitElement (Expr (Num 25)))
+                    )
+                ))
+                ",
+            ),
+            (
+                r#"struct person *p;"#,
+                "(Variable (Name p (Ptr (Struct person))))",
+            ),
+        ];
+
+        run_tests(parse_program, test_cases);
+    }
+
+    #[test]
+    fn struct_multi_var() {
+        let test_cases = vec![
+            (
+                "struct Point p = {1,2}, q = {3,4};",
+                "
+                (Variable (Name p (Struct Point)) (AggInit
+                    (InitElement (Expr (Num 1)))
+                    (InitElement (Expr (Num 2)))
+                ))                
+                (Variable (Name q (Struct Point)) (AggInit
+                    (InitElement (Expr (Num 3)))
+                    (InitElement (Expr (Num 4)))
+                ))               
+                ",
+            ),
+            (
+                "struct Point p = 1, q = 2;",
+                "
+                (Variable (Name p (Struct Point)) (Num 1))
+                (Variable (Name q (Struct Point)) (Num 2))
+                ",
+            ),
+            (
+                "struct Point p = 1, q;",
+                "
+                (Variable (Name p (Struct Point)) (Num 1))
+                (Variable (Name q (Struct Point)))
+                ",
+            ),
+            (
+                "struct Point p, q;",
+                "                    
+                (Variable (Name p (Struct Point)))
+                (Variable (Name q (Struct Point)))
+                ",
             ),
         ];
 

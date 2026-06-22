@@ -215,6 +215,7 @@ pub enum OperatorTypes {
 
     // Bitfields, ternary, goto, switch
     Colon,
+    QuestionMark,
 
     // ambiguious operators
     Inc,        // ++ can be prefix or postfix
@@ -238,7 +239,7 @@ pub enum OperatorTypes {
 }
 
 impl OperatorTypes {
-    const MAPPINGS: &'static [(&'static str, Self); 31] = &[
+    const MAPPINGS: &'static [(&'static str, Self); 32] = &[
         ("(UNKNOWN)", Self::NoOperator),
         (",", Self::Comma),
         ("*", Self::Star),
@@ -270,6 +271,7 @@ impl OperatorTypes {
         ("~", Self::BitNot),
         ("!", Self::Not),
         (":", Self::Colon),
+        ("?", Self::QuestionMark),
     ];
 
     pub fn potential_unary(&self) -> bool {
@@ -298,22 +300,6 @@ impl OperatorTypes {
             | Self::Inc
             | Self::Dec => return true,
             _ => return false,
-        }
-    }
-
-    pub fn precedence(&self) -> u8 {
-        match self {
-            Self::Or => 1,
-            Self::And => 2,
-            Self::BitOr => 3,
-            Self::BitXOR => 4,
-            Self::Amperstand => 5, // BitAnd
-            Self::Equal | Self::NotEqual => 6,
-            Self::Greater | Self::GreaterOrEq | Self::Less | Self::LessOrEq => 7,
-            Self::BitLShift | Self::BitRShift => 8,
-            Self::Plus | Self::Minus => 9,
-            Self::Star | Self::Divide | Self::Modulus => 10,
-            _ => 0,
         }
     }
 }

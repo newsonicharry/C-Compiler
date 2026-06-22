@@ -104,26 +104,7 @@ impl GlobalNode {
             }
 
             Self::Struct { data } => {
-                output.push_str(&format!("(Struct"));
-
-                if let Some(name) = data.name.clone() {
-                    output.push_str(&format!(" {name}"));
-                }
-
-                if data.is_defined {
-                    output.push_str(&format!(" (Members"));
-
-                    for member in &data.members {
-                        output.push_str(&format!("\n{indent_chars}{member}"));
-                    }
-
-                    if !data.members.is_empty() {
-                        output.push_str("\n");
-                    }
-                    output.push_str(")");
-                }
-
-                output.push_str(")");
+                output.push_str(&data.display(indentation));
             }
 
             _ => todo!(),
@@ -142,7 +123,7 @@ pub enum StatementNode {
 
     Expression {
         var_type: TypeNode,
-        r_value: Option<(AssignmentTypes, InitalizerNode)>,
+        r_value: Option<ExprNode>,
     },
 }
 
@@ -184,21 +165,13 @@ impl StatementNode {
 
         match self {
             Self::Expression { var_type, r_value } => {
-                todo!()
-                // output.push_str(&format!("(Variable {var_type}"));
+                output.push_str(&format!("(Variable {var_type}"));
 
-                // if let Some((assign_op, expression)) = r_value {
-                //     output.push_str(&format!(
-                //         " {assign_op} {}",
-                //         expression
-                //             .to_string()
-                //             .chars()
-                //             .filter(|x| *x != '\n')
-                //             .collect::<String>(),
-                //     ));
-                // }
+                if let Some(expression) = r_value {
+                    output.push_str(&format!(" {expression}",));
+                }
 
-                // output.push_str(")");
+                output.push_str(")");
             }
 
             Self::Block { statements } => {
@@ -224,6 +197,8 @@ pub fn parse_program(lexer: &mut Lexer) -> Result<Root, String> {
             continue;
         }
 
+        // println!("{token}");
+        // println!("{:?}", lexer.forward_peek());
         match token {
             TokenTypes::DataType(_) => {
                 root.0.push(parse_function_or_var(lexer)?);
@@ -233,7 +208,10 @@ pub fn parse_program(lexer: &mut Lexer) -> Result<Root, String> {
                 root.0.extend(parse_struct_keyword(lexer)?);
             }
 
-            TokenTypes::Semicolon => {} // semicolons can be by themselves
+            TokenTypes::Semicolon => {
+                lexer.advance();
+            }
+
             _ => unimplemented!(),
         }
     }
@@ -274,37 +252,38 @@ fn parse_function_or_var(lexer: &mut Lexer) -> Result<GlobalNode, String> {
 
 pub fn parse_var(lexer: &mut Lexer) -> Result<StatementNode, String> {
     let var_type = parse_type(lexer)?;
+    todo!()
 
-    let Some(next_token) = lexer.peek() else {
-        return Err(String::from("Expected end of var, got nothing"));
-    };
+    // let Some(next_token) = lexer.peek() else {
+    //     return Err(String::from("Expected end of var, got nothing"));
+    // };
 
-    if matches!(next_token, TokenTypes::Semicolon) {
-        lexer.advance();
+    // if matches!(next_token, TokenTypes::Semicolon) {
+    //     lexer.advance();
 
-        let final_var = StatementNode::Expression {
-            var_type,
-            r_value: None,
-        };
+    //     let final_var = StatementNode::Expression {
+    //         var_type,
+    //         r_value: None,
+    //     };
 
-        return Ok(final_var);
-    }
+    //     return Ok(final_var);
+    // }
 
-    let assign_op = lexer.expect_extract(|x| match x {
-        TokenTypes::Assignment(assign_op) => Some(assign_op),
-        _ => None,
-    })?;
+    // let assign_op = lexer.expect_extract(|x| match x {
+    //     TokenTypes::Assignment(assign_op) => Some(assign_op),
+    //     _ => None,
+    // })?;
 
-    let initalizer = parse_initalizer(lexer)?;
+    // let initalizer = parse_initalizer::<PARSE_COMMA>(lexer)?;
 
-    lexer.expect(|x| matches!(x, TokenTypes::Semicolon))?;
+    // lexer.expect(|x| matches!(x, TokenTypes::Semicolon))?;
 
-    let final_var = StatementNode::Expression {
-        var_type,
-        r_value: Some((assign_op, initalizer)),
-    };
+    // let final_var = StatementNode::Expression {
+    //     var_type,
+    //     r_value: Some((assign_op, initalizer)),
+    // };
 
-    Ok(final_var)
+    // Ok(final_var)
 }
 
 fn parse_function(lexer: &mut Lexer) -> Result<GlobalNode, String> {
@@ -361,8 +340,17 @@ fn parse_block(lexer: &mut Lexer) -> Result<StatementNode, String> {
     todo!()
 }
 
-pub fn parse_initalizer(lexer: &mut Lexer) -> Result<InitalizerNode, String> {
+pub const STOP_AT_COMMA: bool = false;
+
+pub fn parse_initalizer<const SHOULD_PARSE_COMMA: bool>(
+    lexer: &mut Lexer,
+) -> Result<InitalizerNode, String> {
     let token = lexer.force_peek("Expected initalizer, got nothing")?;
+
+    let start_precedence = match SHOULD_PARSE_COMMA {
+        true => 0,
+        false => 3,
+    };
 
     let mut aggregate_node = None;
     let mut expr_node = None;
@@ -375,11 +363,11 @@ pub fn parse_initalizer(lexer: &mut Lexer) -> Result<InitalizerNode, String> {
         TokenTypes::Literal(_)
         | TokenTypes::Identifier(_)
         | TokenTypes::Keyword(KeywordTypes::Sizeof) => {
-            expr_node = Some(parse_expression(lexer, 0)?);
+            expr_node = Some(parse_expression(lexer, start_precedence)?);
         }
 
         TokenTypes::Operator(op) if op.potential_unary() => {
-            expr_node = Some(parse_expression(lexer, 0)?);
+            expr_node = Some(parse_expression(lexer, start_precedence)?);
         }
 
         _ => {

@@ -1,15 +1,19 @@
 use crate::lexer::escape_sequences::CharList;
 use crate::lexer::escape_sequences::CharType;
+use crate::lexer::language_features::AssignmentTypes;
 use crate::lexer::language_features::KeywordTypes;
 use crate::lexer::language_features::LiteralTypes;
 use crate::lexer::language_features::OperatorTypes;
 use crate::lexer::lexer::{Lexer, TokenTypes};
 use crate::lexer::number_parser::FloatType;
 use crate::lexer::number_parser::IntType;
+use crate::parser::aggregate_init::AggregateInit;
+use crate::parser::aggregate_init::parse_aggregate_init;
 use crate::parser::helper::pretty_clean_string;
 use crate::parser::helper::verify_next_in_comma_list;
 use crate::parser::type_parser::TypeNode;
 use crate::parser::type_parser::parse_type;
+
 use std::fmt::Display;
 use std::u8;
 
@@ -45,9 +49,18 @@ pub enum ExprNode {
     Empty,
     Binary {
         left: Box<ExprNode>,
-        operator: OperatorTypes,
+        operator: TokenTypes,
         right: Box<ExprNode>,
     },
+    Ternary {
+        if_expr: Box<ExprNode>,
+        then_expr: Box<ExprNode>,
+        else_expr: Box<ExprNode>,
+    },
+    Comma {
+        items: Vec<ExprNode>,
+    },
+
     Integer {
         num: IntType,
     },
@@ -99,6 +112,9 @@ pub enum ExprNode {
         all_casts: Vec<TypeNode>,
         expr: Box<ExprNode>,
     },
+    Aggregate {
+        aggregate: Box<AggregateInit>,
+    },
 }
 
 impl ExprNode {
@@ -113,11 +129,38 @@ impl ExprNode {
                 operator,
                 right,
             } => {
+                let op_as_str = match operator {
+                    TokenTypes::Operator(op) => op.to_string(),
+                    TokenTypes::Assignment(assign) => assign.to_string(),
+                    _ => unreachable!(),
+                };
+
                 output.push_str(&format!(
-                    "{indent_str}(Binary\n{}\n{next_indent_str}(Op  {operator})\n{})",
+                    "{indent_str}(Binary\n{}\n{next_indent_str}(Op {op_as_str})\n{})",
                     left.display(indent + 2),
                     right.display(indent + 2)
                 ));
+            }
+
+            Self::Ternary {
+                if_expr,
+                then_expr,
+                else_expr,
+            } => {
+                output.push_str(&format!(
+                    "{indent_str}(Ternary\n{}\n{}\n{})",
+                    if_expr.display(indent + 2),
+                    then_expr.display(indent + 2),
+                    else_expr.display(indent + 2)
+                ));
+            }
+
+            Self::Comma { items } => {
+                output.push_str("(Comma");
+                for item in items {
+                    output.push_str(&format!(" {item}"));
+                }
+                output.push(')');
             }
 
             Self::PostFix { left, right } => {
@@ -235,6 +278,10 @@ impl ExprNode {
                 output.push_str(&format!("\n{})", expr.display(indent + 2)));
             }
 
+            Self::Aggregate { aggregate } => {
+                output.push_str(&format!("{indent_str}{aggregate}"));
+            }
+
             Self::Empty => {
                 output.push_str(&format!("{indent_str}(Empty)"));
             }
@@ -260,7 +307,9 @@ fn parse_cast(lexer: &mut Lexer) -> Result<ExprNode, String> {
             return Err(format!("Expected next token in expression, got nothing"));
         };
 
-        if !matches!(future_token, TokenTypes::DataType(_)) {
+        if !matches!(future_token, TokenTypes::DataType(_))
+            && !matches!(future_token, TokenTypes::Keyword(KeywordTypes::Struct))
+        {
             break;
         }
         lexer.advance();
@@ -383,7 +432,9 @@ pub fn parse_func_call_args(lexer: &mut Lexer) -> Result<ExprNode, String> {
             return Err(format!("Unexpected comma in function call"));
         }
 
-        args.push(parse_expression(lexer, 0)?);
+        // since we don't want to collect commas we start as a higher precedence level
+        // commas have a precedence of 2 so we start at 3 instead
+        args.push(parse_expression(lexer, 3)?);
 
         verify_next_in_comma_list(lexer, TokenTypes::Operator(OperatorTypes::RParen), "abc")?;
 
@@ -520,27 +571,73 @@ fn parse_postfix(lexer: &mut Lexer) -> Result<ExprNode, String> {
     return Ok(node);
 }
 
+fn get_precedence(token: &TokenTypes) -> Option<u8> {
+    let precedence = match token {
+        TokenTypes::Operator(op) => match op {
+            OperatorTypes::Comma => 2,
+            OperatorTypes::Colon | OperatorTypes::QuestionMark => 3,
+            OperatorTypes::Or => 4,
+            OperatorTypes::And => 5,
+            OperatorTypes::BitOr => 6,
+            OperatorTypes::BitXOR => 7,
+            OperatorTypes::Amperstand => 8, // BitAnd
+            OperatorTypes::Equal | OperatorTypes::NotEqual => 9,
+            OperatorTypes::Greater
+            | OperatorTypes::GreaterOrEq
+            | OperatorTypes::Less
+            | OperatorTypes::LessOrEq => 10,
+            OperatorTypes::BitLShift | OperatorTypes::BitRShift => 11,
+            OperatorTypes::Plus | OperatorTypes::Minus => 12,
+            OperatorTypes::Star | OperatorTypes::Divide | OperatorTypes::Modulus => 13,
+            _ => 0,
+        },
+
+        TokenTypes::Assignment(_) => 1,
+
+        _ => 0,
+    };
+
+    if precedence == 0 {
+        return None;
+    }
+
+    Some(precedence)
+}
+
 pub fn parse_expression(lexer: &mut Lexer, min_precedence: u8) -> Result<ExprNode, String> {
     let mut left = parse_primary(lexer)?;
 
-    while let Some(TokenTypes::Operator(operator_type)) = lexer.peek()
-        && !operator_type.potential_postfix()
-        && !matches!(operator_type, OperatorTypes::Comma)
-    {
-        let precedence = operator_type.precedence();
+    while let Some(token) = lexer.peek() {
+        let Some(precedence) = get_precedence(&token) else {
+            break;
+        };
 
         if precedence < min_precedence {
             break;
         }
 
         lexer.advance();
-        // todo: dont add when its right associativity
+
         let next_min_precedence = precedence + 1;
+
+        if matches!(token, TokenTypes::Operator(OperatorTypes::QuestionMark)) {
+            let middle = parse_expression(lexer, next_min_precedence)?;
+            lexer.expect(|x| matches!(x, TokenTypes::Operator(OperatorTypes::Colon)))?;
+            let end = parse_expression(lexer, 0)?;
+
+            left = ExprNode::Ternary {
+                if_expr: Box::new(left),
+                then_expr: Box::new(middle),
+                else_expr: Box::new(end),
+            };
+
+            continue;
+        }
 
         let right = parse_expression(lexer, next_min_precedence)?;
         left = ExprNode::Binary {
             left: Box::new(left),
-            operator: operator_type,
+            operator: token,
             right: Box::new(right),
         };
     }
@@ -578,7 +675,9 @@ fn parse_primary(lexer: &mut Lexer) -> Result<ExprNode, String> {
                 };
 
                 let node;
-                if matches!(future_token, TokenTypes::DataType(_)) {
+                if matches!(future_token, TokenTypes::DataType(_))
+                    | matches!(future_token, TokenTypes::Keyword(KeywordTypes::Struct))
+                {
                     node = parse_cast(lexer)?;
                 } else {
                     lexer.advance();
@@ -594,6 +693,12 @@ fn parse_primary(lexer: &mut Lexer) -> Result<ExprNode, String> {
 
             TokenTypes::Keyword(KeywordTypes::Sizeof) => return parse_unary(lexer),
 
+            TokenTypes::LCurlyBrace => {
+                return Ok(ExprNode::Aggregate {
+                    aggregate: Box::new(parse_aggregate_init(lexer)?),
+                });
+            }
+
             _ => {
                 return Err(format!(
                     "Expected primary token in expression parser, got token of type {token_type}"
@@ -603,11 +708,13 @@ fn parse_primary(lexer: &mut Lexer) -> Result<ExprNode, String> {
     }
 
     if lexer.peek().is_none() {
-        return Err(String::from("Expected another token, got nothing"));
+        return Err(String::from(
+            "Expected another token in expression, got nothing",
+        ));
     }
 
     Err(String::from(
-        "Next token must be a literal, operator or identifier",
+        "Next token in expression must be a literal, operator or identifier",
     ))
 }
 
@@ -779,6 +886,104 @@ mod tests {
                 "(Cast (Type int) (Binary (Var a) (Op +) (Var b)))",
             ),
             ("(char)10", "(Cast (Type char) (Num 10))"),
+        ];
+
+        run_tests(parse_expression_generic, test_cases);
+    }
+
+    #[test]
+    fn expression_ternary() {
+        let test_cases = vec![
+            (
+                "(a > b) ? a : b;",
+                "
+                (Ternary
+                    (Binary (Var a) (Op >) (Var b))
+                    (Var a)
+                    (Var b)
+                )
+                ",
+            ),
+            (
+                r#" (num % 2 == 0) ? "Even" : "Odd" "#,
+                "
+                (Ternary
+                    (Binary (Binary (Var num) (Op %) (Num 2)) (Op ==) (Num 0))
+                    (Str Even)
+                    (Str Odd)
+                )
+                    
+                ",
+            ),
+            (
+                r#" (num > 0) ? "Positive" :
+                            (num < 0) ? "Negative" : "Zero";
+                        "#,
+                "
+                (Ternary
+                    (Binary (Var num) (Op >) (Num 0))
+                    (Str Positive)
+                    (Ternary
+                        (Binary (Var num) (Op <) (Num 0))
+                        (Str Negative)
+                        (Str Zero)
+                    )
+                )
+                    
+                ",
+            ),
+            (
+                "(a > b)
+                        ? ((a > c) ? a : c)
+                        : ((b > c) ? b : c);
+
+                        ",
+                "
+                (Ternary
+                    (Binary (Var a) (Op >) (Var b))
+                    (Ternary
+                        (Binary (Var a) (Op >) (Var c))
+                        (Var a)
+                        (Var c)
+                    )
+                    (Ternary
+                        (Binary (Var b) (Op >) (Var c))
+                        (Var b)
+                        (Var c)
+                    )
+                )
+                ",
+            ),
+            (
+                "(x < 0) ? -x : x",
+                "
+                (Ternary
+                    (Binary (Var x) (Op <) (Num 0))
+                    (Unary (Op -) (Var x))
+                    (Var x)
+                )
+                ",
+            ),
+            (
+                "flag ? 100.5 : 0.0",
+                "
+                (Ternary
+                    (Var flag)
+                    (Num 100.5)
+                    (Num 0)
+                )                
+                ",
+            ),
+            (
+                "(n % 2 == 0) ? square(n) : cube(n);",
+                "
+                (Ternary
+                    (Binary (Binary (Var n) (Op %) (Num 2)) (Op ==) (Num 0))
+                    (Postfix (Var square) (FuncCall (Var n)))
+                    (Postfix (Var cube) (FuncCall (Var n)))
+                )
+                ",
+            ),
         ];
 
         run_tests(parse_expression_generic, test_cases);

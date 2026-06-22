@@ -7,7 +7,7 @@ use crate::parser::expression_parser::ExprNode;
 use crate::parser::expression_parser::parse_accessor_operator;
 use crate::parser::helper::pretty_clean_string;
 use crate::parser::parser::InitalizerNode;
-use crate::parser::parser::parse_initalizer;
+use crate::parser::parser::{STOP_AT_COMMA, parse_initalizer};
 use std::fmt::Display;
 
 #[derive(Debug, Clone)]
@@ -200,7 +200,7 @@ fn parse_aggregate_member(lexer: &mut Lexer) -> Result<AggregateInit, String> {
         if let TokenTypes::Assignment(AssignmentTypes::SimpleAssignment) = next_token {
             lexer.advance();
 
-            init_value = parse_initalizer(lexer)?;
+            init_value = parse_initalizer::<STOP_AT_COMMA>(lexer)?;
             break;
         }
     }
@@ -214,7 +214,9 @@ fn parse_aggregate_member(lexer: &mut Lexer) -> Result<AggregateInit, String> {
         ));
     }
 
-    lexer.advance();
+    if matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma)) {
+        lexer.advance();
+    }
 
     Ok(AggregateInit::MemberAccess {
         members,
@@ -239,7 +241,7 @@ fn parse_designator_element(lexer: &mut Lexer) -> Result<AggregateInit, String> 
 
     lexer.expect(|x| matches!(x, TokenTypes::Assignment(AssignmentTypes::SimpleAssignment)))?;
 
-    let initalizer = parse_initalizer(lexer)?;
+    let initalizer = parse_initalizer::<STOP_AT_COMMA>(lexer)?;
 
     let designator = AggregateInit::Designator {
         index: index_expr,
@@ -256,7 +258,7 @@ fn parse_designator_element(lexer: &mut Lexer) -> Result<AggregateInit, String> 
 }
 
 fn parse_init_element(lexer: &mut Lexer) -> Result<AggregateInit, String> {
-    let initalizer = parse_initalizer(lexer)?;
+    let initalizer = parse_initalizer::<STOP_AT_COMMA>(lexer)?;
     let aggregate_element = AggregateInit::InitElement {
         value: Box::new(initalizer),
     };
