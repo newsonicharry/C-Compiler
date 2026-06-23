@@ -3,7 +3,11 @@ use crate::lexer::language_features::{AssignmentTypes, OperatorTypes};
 use crate::lexer::lexer::{Lexer, TokenTypes};
 use crate::parser::aggregate_init::{AggregateInit, parse_aggregate_init};
 use crate::parser::expression_parser::{ExprNode, parse_expression};
-use crate::parser::struct_parser::{Struct, parse_struct_keyword};
+use crate::parser::tag_types::enum_parser::Enum;
+use crate::parser::tag_types::helper::is_tag_type_keyword;
+use crate::parser::tag_types::struct_parser::{
+    Struct, parse_struct_keyword, parse_vars_after_type,
+};
 use crate::parser::type_parser::{TypeNode, parse_parameter_list, parse_type};
 use crate::parser::typedef::is_typedef;
 use std::fmt::Display;
@@ -26,11 +30,6 @@ impl Display for Root {
     }
 }
 
-pub struct EnumMember {
-    name: String,
-    value: Option<i32>,
-}
-
 pub enum GlobalNode {
     // functions, variables, struct, union, enum, typedef
     Function {
@@ -49,14 +48,8 @@ pub enum GlobalNode {
         members: Vec<TypeNode>,
     },
 
-    Struct {
-        data: Struct,
-    },
-
-    Enum {
-        name: Option<String>,
-        members: Vec<EnumMember>,
-    },
+    Struct(Struct),
+    Enum(Enum),
 
     Typedef {}, // Todo, don't want to even touch these yet
 }
@@ -103,7 +96,7 @@ impl GlobalNode {
                 output.push_str(&expr_statement.to_string());
             }
 
-            Self::Struct { data } => {
+            Self::Struct(data) => {
                 output.push_str(&data.display(indentation));
             }
 
@@ -197,12 +190,11 @@ pub fn parse_program(lexer: &mut Lexer) -> Result<Root, String> {
             continue;
         }
 
-        // println!("{token}");
-        // println!("{:?}", lexer.forward_peek());
         match token {
-            TokenTypes::DataType(_) => {
-                root.0.push(parse_function_or_var(lexer)?);
-            }
+            TokenTypes::DataType(_) => match is_tag_type_keyword(lexer, &KeywordTypes::Struct)? {
+                true => root.0.extend(parse_struct_keyword(lexer)?),
+                false => root.0.push(parse_function_or_var(lexer)?),
+            },
 
             TokenTypes::Keyword(KeywordTypes::Struct) => {
                 root.0.extend(parse_struct_keyword(lexer)?);
@@ -244,46 +236,57 @@ fn parse_function_or_var(lexer: &mut Lexer) -> Result<GlobalNode, String> {
 
     match is_function {
         true => parse_function(lexer),
-        false => Ok(GlobalNode::Variable {
-            expr_statement: parse_var(lexer)?,
-        }),
+        false => todo!(), // false => Ok(GlobalNode::Variable {
+                          //     expr_statement: parse_statement(lexer)?,
+                          // }),
     }
 }
 
-pub fn parse_var(lexer: &mut Lexer) -> Result<StatementNode, String> {
-    let var_type = parse_type(lexer)?;
-    todo!()
+/// A high level variable parser
+/// Does not support struct parsing
+pub fn parse_statement(lexer: &mut Lexer) -> Result<Vec<StatementNode>, String> {
+    let mut var_type = parse_type(lexer)?;
 
-    // let Some(next_token) = lexer.peek() else {
-    //     return Err(String::from("Expected end of var, got nothing"));
-    // };
+    let next_token = lexer.force_peek("Expected end of var, got nothing")?;
 
-    // if matches!(next_token, TokenTypes::Semicolon) {
-    //     lexer.advance();
+    if matches!(next_token, TokenTypes::Semicolon) {
+        lexer.advance();
 
-    //     let final_var = StatementNode::Expression {
-    //         var_type,
-    //         r_value: None,
-    //     };
+        let final_var = StatementNode::Expression {
+            var_type: var_type.clone(),
+            r_value: None,
+        };
 
-    //     return Ok(final_var);
-    // }
+        return Ok(vec![final_var]);
+    }
 
-    // let assign_op = lexer.expect_extract(|x| match x {
-    //     TokenTypes::Assignment(assign_op) => Some(assign_op),
-    //     _ => None,
-    // })?;
+    let mut all_vars = vec![];
 
-    // let initalizer = parse_initalizer::<PARSE_COMMA>(lexer)?;
+    if matches!(
+        next_token,
+        TokenTypes::Assignment(AssignmentTypes::SimpleAssignment)
+    ) {
+        lexer.advance();
 
-    // lexer.expect(|x| matches!(x, TokenTypes::Semicolon))?;
+        let first_var = StatementNode::Expression {
+            var_type: var_type.clone(),
+            r_value: Some(parse_expression(lexer, 3)?),
+        };
 
-    // let final_var = StatementNode::Expression {
-    //     var_type,
-    //     r_value: Some((assign_op, initalizer)),
-    // };
+        all_vars.push(first_var);
+    } else if matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma)) {
+        let first_var = StatementNode::Expression {
+            var_type: var_type.clone(),
+            r_value: None,
+        };
 
-    // Ok(final_var)
+        all_vars.push(first_var);
+    }
+
+    let additional_vars = parse_vars_after_type::<false>(lexer, &var_type.get_most_nested_layer())?;
+    all_vars.extend(additional_vars);
+
+    Ok(all_vars)
 }
 
 fn parse_function(lexer: &mut Lexer) -> Result<GlobalNode, String> {

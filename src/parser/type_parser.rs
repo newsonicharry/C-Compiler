@@ -58,24 +58,25 @@ pub enum TypeNode {
         name: Option<String>, // if its declared from an anonymous struct
         qualifiers: Vec<DataTypes>,
     },
+
+    Enum {
+        name: Option<String>,
+        qualifiers: Vec<DataTypes>,
+    },
 }
 
 impl TypeNode {
-    pub fn error_if_not_variable(&self) -> Result<(), String> {
+    pub fn contains_struct_type(&self) -> bool {
         match self {
-            Self::Variable { .. } => Ok(()),
-            _ => Err(String::from("Type must be a variable")),
+            TypeNode::Variable { held_value, .. }
+            | TypeNode::Normal { held_value, .. }
+            | TypeNode::Pointer { held_value, .. }
+            | TypeNode::Array { held_value, .. } => held_value.contains_struct_type(),
+
+            TypeNode::Struct { .. } => true,
+
+            TypeNode::Empty | TypeNode::Enum { .. } => false,
         }
-    }
-
-    pub fn change_var_name(&mut self, new_name: &str) -> Result<(), String> {
-        let Self::Variable { name, .. } = self else {
-            return Err(String::from("Type must be a variable"));
-        };
-
-        *name = new_name.to_string();
-
-        Ok(())
     }
 
     // gotta love the rust borrow checker making me write this
@@ -112,8 +113,8 @@ impl TypeNode {
 
             Self::Empty => *self = nested_value.clone(),
 
-            Self::Struct { .. } => {
-                panic!("Struct type is a unique type with no internal values")
+            Self::Struct { .. } | Self::Enum { .. } => {
+                panic!("Tag type type is a unique type with no internal values")
             }
         }
     }
@@ -146,6 +147,23 @@ impl TypeNode {
         }
 
         output.push_str(&format!("{})", Self::display(held_value)));
+    }
+
+    fn display_tag_type(output: &mut String, name: &Option<String>, qualifiers: &Vec<DataTypes>) {
+        if let Some(name) = name {
+            output.push_str(&format!(" {name}"));
+        }
+
+        if !qualifiers.is_empty() {
+            output.push_str(" (Qualifiers");
+            for qualifier in qualifiers {
+                output.push_str(&format!(" {qualifier}"));
+            }
+
+            output.push_str(")");
+        }
+
+        output.push_str(")");
     }
 
     fn display(node: &TypeNode) -> String {
@@ -201,21 +219,12 @@ impl TypeNode {
 
             TypeNode::Struct { name, qualifiers } => {
                 output.push_str(&format!("(Struct"));
+                Self::display_tag_type(&mut output, name, qualifiers);
+            }
 
-                if let Some(name) = name {
-                    output.push_str(&format!(" {name}"));
-                }
-
-                if !qualifiers.is_empty() {
-                    output.push_str("(Qualifiers");
-                    for qualifier in qualifiers {
-                        output.push_str(&format!(" {qualifier}"));
-                    }
-
-                    output.push_str(")");
-                }
-
-                output.push_str(")");
+            TypeNode::Enum { name, qualifiers } => {
+                output.push_str(&format!("(Enum"));
+                Self::display_tag_type(&mut output, name, qualifiers);
             }
 
             TypeNode::Empty => {}

@@ -50,14 +50,11 @@ pub enum KeywordTypes {
     Do,
     Else,
     Enum,
-    Extern,
     For,
     Goto,
     If,
-    Register,
     Return,
     Sizeof,
-    Static,
     Struct,
     Switch,
     Typedef,
@@ -69,7 +66,7 @@ pub enum KeywordTypes {
 }
 
 impl KeywordTypes {
-    const MAPPINGS: &'static [(&'static str, Self); 23] = &[
+    const MAPPINGS: &'static [(&'static str, Self); 20] = &[
         ("break", Self::Break),
         ("case", Self::Case),
         ("continue", Self::Continue),
@@ -77,14 +74,11 @@ impl KeywordTypes {
         ("do", Self::Do),
         ("else", Self::Else),
         ("enum", Self::Enum),
-        ("extern", Self::Extern),
         ("for", Self::For),
         ("goto", Self::Goto),
         ("if", Self::If),
-        ("register", Self::Register),
         ("return", Self::Return),
         ("sizeof", Self::Sizeof),
-        ("static", Self::Static),
         ("struct", Self::Struct),
         ("switch", Self::Switch),
         ("typedef", Self::Typedef),
@@ -117,10 +111,13 @@ pub enum DataTypes {
     Void,
     Volatile,
     _Bool,
+    Register,
+    Static,
+    Extern,
 }
 
 impl DataTypes {
-    const MAPPINGS: &'static [(&'static str, Self); 15] = &[
+    const MAPPINGS: &'static [(&'static str, Self); 18] = &[
         ("NOTYPE", Self::NoType),
         ("char", Self::Char),
         ("auto", Self::Auto),
@@ -136,7 +133,17 @@ impl DataTypes {
         ("void", Self::Void),
         ("volatile", Self::Volatile),
         ("_Bool", Self::_Bool),
+        ("register", Self::Register),
+        ("static", Self::Static),
+        ("extern", Self::Extern),
     ];
+
+    pub fn is_storage_specifier(&self) -> bool {
+        match self {
+            Self::Register | Self::Static | Self::Extern | Self::Auto => true,
+            _ => false,
+        }
+    }
 
     pub fn is_qualifier(&self) -> bool {
         match *self {
