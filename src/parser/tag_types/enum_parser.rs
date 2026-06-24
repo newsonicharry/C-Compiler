@@ -1,53 +1,48 @@
 use crate::lexer::language_features::AssignmentTypes;
+use crate::lexer::language_features::KeywordTypes;
 use crate::lexer::language_features::OperatorTypes;
-use crate::lexer::language_features::{KeywordTypes, LiteralTypes};
 use crate::lexer::lexer::{Lexer, TokenTypes};
 use crate::parser::expression_parser::ExprNode;
 use crate::parser::expression_parser::parse_expression;
-use crate::parser::parser::parse_statement;
-use crate::parser::parser::{GlobalNode, StatementNode};
+use crate::parser::helper::pretty_clean_string;
+use crate::parser::parser::GlobalNode;
 use crate::parser::tag_types::helper::TagKeywordUsage;
-use crate::parser::tag_types::helper::is_tag_type_keyword;
-use crate::parser::tag_types::helper::parse_tag_type_qualifiers;
+use crate::parser::tag_types::helper::TagType;
+use crate::parser::tag_types::helper::TagTypeMember;
+use crate::parser::tag_types::helper::parse_tag_type_declaration;
+use crate::parser::tag_types::helper::parse_tag_type_definition_and_vars;
+use crate::parser::tag_types::helper::parse_tag_type_variable;
 use crate::parser::tag_types::helper::tag_type_keyword_usage;
-use crate::parser::tag_types::struct_parser::parse_vars_after_type;
-use crate::parser::type_parser::{TypeNode, parse_type};
-use std::fmt::Display;
 
-pub struct Enum {
-    pub name: Option<String>,
-    pub members: Vec<EnumMember>,
-}
-
-impl Enum {
-    pub fn display(indendation: usize) -> String {
-        todo!()
-    }
-}
-
+#[derive(Clone)]
 pub struct EnumMember {
     pub name: String,
     pub value: Option<ExprNode>,
 }
 
-impl Display for EnumMember {
-    fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut output = format!("(EnumMember (Name {})", self.name);
+impl TagTypeMember for EnumMember {
+    fn display_member(&self, indentation: usize) -> String {
+        let indent_str = " ".repeat(indentation);
+        let mut output = format!("{indent_str}(Member (Name {})", self.name);
 
         if let Some(enum_value) = &self.value {
-            output.push_str(&format!(" (Value {enum_value})"));
+            output.push_str(&format!(
+                " (Value {})",
+                pretty_clean_string(&enum_value.to_string())
+            ));
         }
 
         output.push(')');
-
-        write!(display, "{output}")
+        output
     }
 }
 
 fn parse_enum_members(lexer: &mut Lexer) -> Result<Vec<EnumMember>, String> {
     let mut all_members = Vec::new();
 
-    while let Some(token) = lexer.peek() {
+    while let Some(token) = lexer.peek()
+        && !matches!(token, TokenTypes::RCurlyBrace)
+    {
         if matches!(token, TokenTypes::Operator(OperatorTypes::Comma)) {
             return Err(String::from("Unexpected comma in enum"));
         }
@@ -75,10 +70,11 @@ fn parse_enum_members(lexer: &mut Lexer) -> Result<Vec<EnumMember>, String> {
         });
 
         let next_token = lexer.force_peek("Unexpected end to enum")?;
-        lexer.advance();
 
         match next_token {
-            TokenTypes::Operator(OperatorTypes::Comma) => {}
+            TokenTypes::Operator(OperatorTypes::Comma) => {
+                lexer.advance();
+            }
             TokenTypes::RCurlyBrace => {
                 break;
             }
@@ -90,10 +86,12 @@ fn parse_enum_members(lexer: &mut Lexer) -> Result<Vec<EnumMember>, String> {
         }
     }
 
+    lexer.advance();
+
     Ok(all_members)
 }
 
-pub fn parse_enum_definition(lexer: &mut Lexer) -> Result<Enum, String> {
+pub fn parse_enum_definition(lexer: &mut Lexer) -> Result<GlobalNode, String> {
     lexer.advance();
 
     let name = match lexer.peek() {
@@ -108,42 +106,127 @@ pub fn parse_enum_definition(lexer: &mut Lexer) -> Result<Enum, String> {
 
     let members = parse_enum_members(lexer)?;
 
-    lexer.advance();
+    if members.len() == 0 {
+        return Err(String::from(
+            "Expected enum definition to have at least one variant",
+        ));
+    }
 
-    Ok(Enum { name, members })
+    Ok(GlobalNode::Enum(TagType {
+        name,
+        members,
+        is_defined: true,
+    }))
 }
 
 pub fn parse_enum_keyword(lexer: &mut Lexer) -> Result<Vec<GlobalNode>, String> {
     let usage = tag_type_keyword_usage(lexer)?;
-
-    if matches!(usage, TagKeywordUsage::Definition) {
-        let mut enum_and_vars = Vec::new();
-
-        let mut var_qualifiers = parse_tag_type_qualifiers(lexer)?;
-
-        let defined_enum = parse_enum_definition(lexer)?;
-        let enum_name = defined_enum.name.clone();
-
-        enum_and_vars.push(GlobalNode::Enum(defined_enum));
-
-        var_qualifiers.extend(parse_tag_type_qualifiers(lexer)?);
-
-        let struct_type = TypeNode::Enum {
-            name: enum_name,
-            qualifiers: var_qualifiers,
-        };
-
-        let defined_vars: Vec<GlobalNode> = parse_vars_after_type::<true>(lexer, &struct_type)?
-            .iter()
-            .map(|x| GlobalNode::Variable {
-                expr_statement: x.clone(),
-            })
-            .collect();
-
-        enum_and_vars.extend(defined_vars);
-
-        return Ok(enum_and_vars);
+    if matches!(usage, TagKeywordUsage::Variable) {
+        return parse_tag_type_variable(lexer);
     }
 
-    todo!()
+    if matches!(usage, TagKeywordUsage::Definition) {
+        return parse_tag_type_definition_and_vars(lexer, parse_enum_definition);
+    }
+
+    if matches!(usage, TagKeywordUsage::Declaration) {
+        return Ok(vec![parse_tag_type_declaration(
+            lexer,
+            &KeywordTypes::Enum,
+        )?]);
+    }
+
+    unreachable!()
+}
+
+// this doesn't need to be tested as heavily as most code is being reused from the struct parser
+// and that code already has been verified
+#[cfg(test)]
+mod tests {
+    use crate::parser::helper::run_tests;
+    use crate::parser::parser::parse_program;
+
+    #[test]
+    fn enum_creation() {
+        let test_cases = vec![
+            (
+                " enum Color {RED, GREEN, BLUE}; ",
+                "
+                (Enum Color (Members 
+                    (Member (Name RED))
+                    (Member (Name GREEN))
+                    (Member (Name BLUE))
+                ))
+                ",
+            ),
+            ("enum Color c;", "(Variable (Name c (Enum Color)))"),
+            (
+                "enum Color { RED, GREEN, BLUE} c;",
+                "
+                (Enum Color (Members
+                    (Member (Name RED))
+                    (Member (Name GREEN))
+                    (Member (Name BLUE))
+                ))
+                (Variable (Name c (Enum Color)))                    
+                ",
+            ),
+            (
+                "enum Numbers { ZERO = 0, ONE = 1, TWO = 2};",
+                "
+                (Enum Numbers (Members
+                    (Member (Name ZERO) (Value (Num 0)))
+                    (Member (Name ONE) (Value (Num 1)))
+                    (Member (Name TWO) (Value (Num 2)))
+                ))
+                ",
+            ),
+            (
+                "enum SignedValues {NEG = -1,ZERO = 0,POS = 1};",
+                "
+                (Enum SignedValues (Members
+                    (Member (Name NEG) (Value (Unary (Op -) (Num 1))))
+                    (Member (Name ZERO) (Value (Num 0)))
+                    (Member (Name POS) (Value (Num 1)))
+                ))  
+                ",
+            ),
+            (
+                "enum Expr {A = 1 + 2, B = A * 4, C = (B << 1)}; ",
+                "
+                (Enum Expr (Members
+                    (Member (Name A) (Value
+                        (Binary (Num 1) (Op +) (Num 2))))
+                    (Member (Name B) (Value
+                        (Binary (Var A) (Op *) (Num 4))))
+                    (Member (Name C) (Value
+                        (Binary (Var B) (Op <<) (Num 1))))
+                ))                
+                ",
+            ),
+            (
+                "enum {A,B,C};",
+                "
+                (Enum (Members
+                    (Member (Name A))
+                    (Member (Name B))
+                    (Member (Name C))
+                ))                  
+                ",
+            ),
+            ("enum Color;", "(Enum Color)"),
+            (
+                " enum Color {RED, GREEN, BLUE, }; ",
+                "
+                (Enum Color (Members
+                    (Member (Name RED))
+                    (Member (Name GREEN))
+                    (Member (Name BLUE))
+                ))
+                ",
+            ),
+        ];
+
+        run_tests(parse_program, test_cases);
+    }
 }

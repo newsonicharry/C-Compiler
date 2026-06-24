@@ -12,11 +12,6 @@ mod semantics;
 const PROGRAM: &str = r#"
 
 
-
-struct A{ struct B; int x; };
-
-// struct B;
-
 "#;
 
 fn main() {

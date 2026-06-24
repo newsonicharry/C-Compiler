@@ -3,11 +3,10 @@ use crate::lexer::language_features::{AssignmentTypes, OperatorTypes};
 use crate::lexer::lexer::{Lexer, TokenTypes};
 use crate::parser::aggregate_init::{AggregateInit, parse_aggregate_init};
 use crate::parser::expression_parser::{ExprNode, parse_expression};
-use crate::parser::tag_types::enum_parser::Enum;
-use crate::parser::tag_types::helper::is_tag_type_keyword;
-use crate::parser::tag_types::struct_parser::{
-    Struct, parse_struct_keyword, parse_vars_after_type,
-};
+use crate::parser::tag_types::enum_parser::{EnumMember, parse_enum_keyword};
+use crate::parser::tag_types::helper::{TagType, is_tag_type_keyword, parse_vars_after_type};
+use crate::parser::tag_types::struct_parser::{StructMember, parse_struct_keyword};
+use crate::parser::tag_types::union_parser::{UnionMember, parse_union_keyword};
 use crate::parser::type_parser::{TypeNode, parse_parameter_list, parse_type};
 use crate::parser::typedef::is_typedef;
 use std::fmt::Display;
@@ -30,6 +29,7 @@ impl Display for Root {
     }
 }
 
+#[derive(Clone)]
 pub enum GlobalNode {
     // functions, variables, struct, union, enum, typedef
     Function {
@@ -39,17 +39,11 @@ pub enum GlobalNode {
         body: Option<StatementNode>,
     },
 
-    Variable {
-        expr_statement: StatementNode,
-    },
+    Variable(StatementNode),
 
-    Union {
-        name: Option<String>,
-        members: Vec<TypeNode>,
-    },
-
-    Struct(Struct),
-    Enum(Enum),
+    Union(TagType<UnionMember>),
+    Struct(TagType<StructMember>),
+    Enum(TagType<EnumMember>),
 
     Typedef {}, // Todo, don't want to even touch these yet
 }
@@ -92,11 +86,19 @@ impl GlobalNode {
                 output.push_str(")");
             }
 
-            Self::Variable { expr_statement } => {
+            Self::Variable(expr_statement) => {
                 output.push_str(&expr_statement.to_string());
             }
 
             Self::Struct(data) => {
+                output.push_str(&data.display(indentation));
+            }
+
+            Self::Enum(data) => {
+                output.push_str(&data.display(indentation));
+            }
+
+            Self::Union(data) => {
                 output.push_str(&data.display(indentation));
             }
 
@@ -107,7 +109,7 @@ impl GlobalNode {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum StatementNode {
     // block, expression, if, switch, while, do, for, return, break, continue, goto, label, case, default
     Block {
@@ -191,13 +193,15 @@ pub fn parse_program(lexer: &mut Lexer) -> Result<Root, String> {
         }
 
         match token {
-            TokenTypes::DataType(_) => match is_tag_type_keyword(lexer, &KeywordTypes::Struct)? {
-                true => root.0.extend(parse_struct_keyword(lexer)?),
-                false => root.0.push(parse_function_or_var(lexer)?),
+            TokenTypes::Keyword(keyword) => match keyword {
+                KeywordTypes::Struct => root.0.extend(parse_struct_keyword(lexer)?),
+                KeywordTypes::Enum => root.0.extend(parse_enum_keyword(lexer)?),
+                KeywordTypes::Union => root.0.extend(parse_union_keyword(lexer)?),
+                _ => todo!(),
             },
 
-            TokenTypes::Keyword(KeywordTypes::Struct) => {
-                root.0.extend(parse_struct_keyword(lexer)?);
+            TokenTypes::DataType(_) => {
+                root.0.extend(parse_data_type(lexer)?);
             }
 
             TokenTypes::Semicolon => {
@@ -209,6 +213,22 @@ pub fn parse_program(lexer: &mut Lexer) -> Result<Root, String> {
     }
 
     Ok(root)
+}
+
+fn parse_data_type(lexer: &mut Lexer) -> Result<Vec<GlobalNode>, String> {
+    if is_tag_type_keyword(lexer, &KeywordTypes::Struct)? {
+        return parse_struct_keyword(lexer);
+    }
+
+    if is_tag_type_keyword(lexer, &KeywordTypes::Enum)? {
+        return parse_enum_keyword(lexer);
+    }
+
+    if is_tag_type_keyword(lexer, &KeywordTypes::Union)? {
+        return parse_union_keyword(lexer);
+    }
+
+    Ok(vec![parse_function_or_var(lexer)?])
 }
 
 fn parse_function_or_var(lexer: &mut Lexer) -> Result<GlobalNode, String> {
@@ -284,6 +304,7 @@ pub fn parse_statement(lexer: &mut Lexer) -> Result<Vec<StatementNode>, String> 
     }
 
     let additional_vars = parse_vars_after_type::<false>(lexer, &var_type.get_most_nested_layer())?;
+
     all_vars.extend(additional_vars);
 
     Ok(all_vars)

@@ -63,19 +63,42 @@ pub enum TypeNode {
         name: Option<String>,
         qualifiers: Vec<DataTypes>,
     },
+
+    Union {
+        name: Option<String>,
+        qualifiers: Vec<DataTypes>,
+    },
 }
 
 impl TypeNode {
-    pub fn contains_struct_type(&self) -> bool {
+    pub fn contains_tag_type(&self, tag_type: &KeywordTypes) -> bool {
+        let is_equal_to_tag_type = match tag_type {
+            KeywordTypes::Struct => {
+                matches!(self, TypeNode::Struct { .. })
+            }
+
+            KeywordTypes::Enum => {
+                matches!(self, TypeNode::Enum { .. })
+            }
+
+            KeywordTypes::Union => {
+                matches!(self, TypeNode::Union { .. })
+            }
+
+            _ => unreachable!(),
+        };
+
+        if is_equal_to_tag_type {
+            return true;
+        }
+
         match self {
             TypeNode::Variable { held_value, .. }
             | TypeNode::Normal { held_value, .. }
             | TypeNode::Pointer { held_value, .. }
-            | TypeNode::Array { held_value, .. } => held_value.contains_struct_type(),
+            | TypeNode::Array { held_value, .. } => held_value.contains_tag_type(tag_type),
 
-            TypeNode::Struct { .. } => true,
-
-            TypeNode::Empty | TypeNode::Enum { .. } => false,
+            _ => false,
         }
     }
 
@@ -113,7 +136,7 @@ impl TypeNode {
 
             Self::Empty => *self = nested_value.clone(),
 
-            Self::Struct { .. } | Self::Enum { .. } => {
+            Self::Struct { .. } | Self::Enum { .. } | Self::Union { .. } => {
                 panic!("Tag type type is a unique type with no internal values")
             }
         }
@@ -227,6 +250,11 @@ impl TypeNode {
                 Self::display_tag_type(&mut output, name, qualifiers);
             }
 
+            TypeNode::Union { name, qualifiers } => {
+                output.push_str(&format!("(Union"));
+                Self::display_tag_type(&mut output, name, qualifiers);
+            }
+
             TypeNode::Empty => {}
         }
 
@@ -278,7 +306,10 @@ pub fn parse_type(lexer: &mut Lexer) -> Result<TypeNode, String> {
                 lexer.advance();
             }
 
-            TokenTypes::DataType(_) | TokenTypes::Keyword(KeywordTypes::Struct) => {
+            TokenTypes::DataType(_)
+            | TokenTypes::Keyword(KeywordTypes::Struct)
+            | TokenTypes::Keyword(KeywordTypes::Enum)
+            | TokenTypes::Keyword(KeywordTypes::Union) => {
                 original_type = Some(parse_normal_type(lexer)?);
             }
 
@@ -394,6 +425,47 @@ fn parse_pointer_qualifiers(lexer: &mut Lexer) -> Vec<DataTypes> {
     qualifiers
 }
 
+fn parse_normal_tag_type(
+    lexer: &mut Lexer,
+    qualifiers: &Vec<DataTypes>,
+) -> Result<TypeNode, String> {
+    let Some(TokenTypes::Keyword(keyword_type)) = lexer.peek() else {
+        return Ok(TypeNode::Empty);
+    };
+
+    lexer.advance();
+
+    let tag_type_name = lexer.expect_extract(|x| match x {
+        TokenTypes::Identifier(name) => Some(name),
+        _ => None,
+    })?;
+
+    match keyword_type {
+        KeywordTypes::Struct => {
+            return Ok(TypeNode::Struct {
+                name: Some(tag_type_name),
+                qualifiers: qualifiers.clone(),
+            });
+        }
+
+        KeywordTypes::Enum => {
+            return Ok(TypeNode::Enum {
+                name: Some(tag_type_name),
+                qualifiers: qualifiers.clone(),
+            });
+        }
+
+        KeywordTypes::Union => {
+            return Ok(TypeNode::Union {
+                name: Some(tag_type_name),
+                qualifiers: qualifiers.clone(),
+            });
+        }
+
+        _ => unreachable!(),
+    }
+}
+
 fn parse_normal_type(lexer: &mut Lexer) -> Result<TypeNode, String> {
     let mut base_type = DataTypes::NoType;
     let mut modifiers: Vec<DataTypes> = Vec::new();
@@ -417,21 +489,9 @@ fn parse_normal_type(lexer: &mut Lexer) -> Result<TypeNode, String> {
         lexer.advance();
     }
 
-    if matches!(
-        lexer.peek(),
-        Some(TokenTypes::Keyword(KeywordTypes::Struct))
-    ) {
-        lexer.advance();
-
-        let struct_name = lexer.expect_extract(|x| match x {
-            TokenTypes::Identifier(struct_name) => Some(struct_name),
-            _ => None,
-        })?;
-
-        return Ok(TypeNode::Struct {
-            name: Some(struct_name),
-            qualifiers,
-        });
+    let tag_type = parse_normal_tag_type(lexer, &qualifiers)?;
+    if !matches!(tag_type, TypeNode::Empty) {
+        return Ok(tag_type);
     }
 
     let is_long_or_short = modifiers
