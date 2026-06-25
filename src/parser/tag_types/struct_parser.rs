@@ -100,12 +100,10 @@ fn parse_nested_tag_type(lexer: &mut Lexer) -> Result<Option<Vec<StructMember>>,
             GlobalNode::Enum(data) => StructMember::DefinedEnum(data),
             GlobalNode::Union(data) => StructMember::DefinedUnion(data),
 
-            GlobalNode::Variable(StatementNode::Expression { var_type, .. }) => {
-                StructMember::NormalType {
-                    item_type: var_type,
-                    bit_field: None,
-                }
-            }
+            GlobalNode::Initalizer { var_type, .. } => StructMember::NormalType {
+                item_type: var_type,
+                bit_field: None,
+            },
 
             _ => unreachable!(),
         };

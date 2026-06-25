@@ -6,7 +6,7 @@ use crate::lexer::lexer::{Lexer, TokenTypes};
 use crate::parser::expression_parser::parse_expression;
 use crate::parser::parser::GlobalNode;
 use crate::parser::parser::StatementNode;
-use crate::parser::parser::parse_statement;
+use crate::parser::parser::parse_variable_statement;
 use crate::parser::tag_types::enum_parser::EnumMember;
 use crate::parser::tag_types::enum_parser::parse_enum_keyword;
 use crate::parser::tag_types::struct_parser::StructMember;
@@ -162,17 +162,20 @@ pub fn tag_type_keyword_usage(lexer: &mut Lexer) -> Result<TagKeywordUsage, Stri
 /// Determines if a sequence of tokens uses a certain tag type
 /// Used within the main parser to determine if it should go to the struct parser
 pub fn is_tag_type_keyword(lexer: &mut Lexer, keyword: &KeywordTypes) -> Result<bool, String> {
-    let curr_token = lexer.force_peek("Expected next token, got nothing")?;
+    lexer.set_flag();
+    parse_tag_type_qualifiers(lexer);
 
+    let curr_token = lexer.force_peek("Expected next token, got nothing")?;
     if curr_token == TokenTypes::Keyword(*keyword) {
+        lexer.recede_to_flag();
         return Ok(true);
     }
 
     if matches!(curr_token, TokenTypes::Keyword(_)) {
+        lexer.recede_to_flag();
         return Ok(false);
     }
 
-    lexer.set_flag();
     let parsed_type = parse_type(lexer)?;
 
     lexer.recede_to_flag();
@@ -226,14 +229,7 @@ pub fn parse_tag_type_declaration(
 }
 
 pub fn parse_tag_type_variable(lexer: &mut Lexer) -> Result<Vec<GlobalNode>, String> {
-    let vars = parse_statement(lexer)?;
-
-    let vars = vars
-        .iter()
-        .map(|x| GlobalNode::Variable(x.clone()))
-        .collect::<Vec<GlobalNode>>();
-
-    return Ok(vars);
+    parse_variable_statement(lexer)
 }
 
 pub fn get_nested_member_if_some(lexer: &mut Lexer) -> Result<Option<Vec<GlobalNode>>, String> {
@@ -277,7 +273,7 @@ fn update_var(struct_type: &TypeNode, lexer: &mut Lexer) -> Result<TypeNode, Str
 pub fn parse_vars_after_type<const IS_STRUCT: bool>(
     lexer: &mut Lexer,
     struct_type: &TypeNode,
-) -> Result<Vec<StatementNode>, String> {
+) -> Result<Vec<GlobalNode>, String> {
     let mut var_type;
     let mut all_vars = Vec::new();
 
@@ -312,14 +308,14 @@ pub fn parse_vars_after_type<const IS_STRUCT: bool>(
         ) {
             lexer.advance();
 
-            final_var = StatementNode::Expression {
+            final_var = GlobalNode::Initalizer {
                 var_type: var_type.clone(),
                 r_value: Some(parse_expression(lexer, 3)?),
             };
         }
         // its a declaration
         else {
-            final_var = StatementNode::Expression {
+            final_var = GlobalNode::Initalizer {
                 var_type: var_type.clone(),
                 r_value: None,
             };
@@ -416,10 +412,7 @@ where
         _ => unreachable!(),
     };
 
-    let defined_vars: Vec<GlobalNode> = parse_vars_after_type::<true>(lexer, &tag_type_type)?
-        .iter()
-        .map(|x| GlobalNode::Variable(x.clone()))
-        .collect();
+    let defined_vars: Vec<GlobalNode> = parse_vars_after_type::<true>(lexer, &tag_type_type)?;
 
     enum_and_vars.extend(defined_vars);
 

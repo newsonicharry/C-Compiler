@@ -3,11 +3,13 @@ use crate::lexer::language_features::{AssignmentTypes, OperatorTypes};
 use crate::lexer::lexer::{Lexer, TokenTypes};
 use crate::parser::aggregate_init::{AggregateInit, parse_aggregate_init};
 use crate::parser::expression_parser::{ExprNode, parse_expression};
+use crate::parser::helper::pretty_clean_string;
+use crate::parser::statement_keywords::{IfStatement, parse_if_statement, parse_return};
 use crate::parser::tag_types::enum_parser::{EnumMember, parse_enum_keyword};
 use crate::parser::tag_types::helper::{TagType, is_tag_type_keyword, parse_vars_after_type};
 use crate::parser::tag_types::struct_parser::{StructMember, parse_struct_keyword};
 use crate::parser::tag_types::union_parser::{UnionMember, parse_union_keyword};
-use crate::parser::type_parser::{TypeNode, parse_parameter_list, parse_type};
+use crate::parser::type_parser::{TypeNode, parse_type};
 use crate::parser::typedef::is_typedef;
 use std::fmt::Display;
 
@@ -31,21 +33,21 @@ impl Display for Root {
 
 #[derive(Clone)]
 pub enum GlobalNode {
-    // functions, variables, struct, union, enum, typedef
     Function {
-        name: String,
-        return_type: TypeNode,
-        params: Vec<TypeNode>,
+        signature: Box<TypeNode>,
         body: Option<StatementNode>,
     },
 
-    Variable(StatementNode),
+    Initalizer {
+        var_type: TypeNode,
+        r_value: Option<ExprNode>,
+    },
 
     Union(TagType<UnionMember>),
     Struct(TagType<StructMember>),
     Enum(TagType<EnumMember>),
-
-    Typedef {}, // Todo, don't want to even touch these yet
+    // Typedef is on an eternal todo list
+    // It'll be done, just not right now...
 }
 
 impl Display for GlobalNode {
@@ -60,34 +62,27 @@ impl GlobalNode {
     fn display(&self, indentation: usize) -> String {
         let mut output = String::new();
 
-        let indent_chars = " ".repeat(indentation + 2);
+        let str_indent = " ".repeat(indentation);
 
         match self {
-            Self::Function {
-                name,
-                return_type,
-                params,
-                body,
-            } => {
-                output.push_str(&format!("(Func {return_type} {name}"));
-
-                if !params.is_empty() {
-                    output.push_str(" (Params ");
-                    for param in params {
-                        output.push_str(&param.to_string());
-                    }
-                    output.push_str(")");
-                }
+            Self::Function { signature, body } => {
+                output.push_str(&signature.to_string());
 
                 if let Some(body) = body {
-                    output.push_str(&format!("\n{body}\n"));
+                    output.pop();
+                    output.push_str(&format!("\n{}", body.display(indentation + 2)));
+                    output.push_str(")");
+                }
+            }
+
+            Self::Initalizer { var_type, r_value } => {
+                output.push_str(&format!("{str_indent}(Variable {var_type}"));
+
+                if let Some(expression) = r_value.clone() {
+                    output.push_str(&format!("{}", &expression.display(indentation + 2)));
                 }
 
                 output.push_str(")");
-            }
-
-            Self::Variable(expr_statement) => {
-                output.push_str(&expr_statement.to_string());
             }
 
             Self::Struct(data) => {
@@ -101,25 +96,24 @@ impl GlobalNode {
             Self::Union(data) => {
                 output.push_str(&data.display(indentation));
             }
-
-            _ => todo!(),
         }
 
         output
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum StatementNode {
     // block, expression, if, switch, while, do, for, return, break, continue, goto, label, case, default
-    Block {
-        statements: Vec<StatementNode>,
-    },
+    Block { statements: Vec<StatementNode> },
 
-    Expression {
-        var_type: TypeNode,
-        r_value: Option<ExprNode>,
-    },
+    General(Box<GlobalNode>),
+    Expression(ExprNode),
+
+    Return(Option<ExprNode>),
+    If(Box<IfStatement>),
+
+    Semicolon,
 }
 
 #[derive(Clone, Debug)]
@@ -148,34 +142,55 @@ impl Display for InitalizerNode {
 
 impl Display for StatementNode {
     fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let final_str = Self::display(self);
+        let final_str = Self::display(self, 0);
 
         write!(display, "{final_str}")
     }
 }
 
 impl StatementNode {
-    fn display(&self) -> String {
+    pub fn display(&self, indentation: usize) -> String {
         let mut output = String::new();
+        let str_indent = " ".repeat(indentation);
 
         match self {
-            Self::Expression { var_type, r_value } => {
-                output.push_str(&format!("(Variable {var_type}"));
-
-                if let Some(expression) = r_value {
-                    output.push_str(&format!(" {expression}",));
-                }
-
-                output.push_str(")");
-            }
-
             Self::Block { statements } => {
-                for statement in statements {
-                    output.push_str(&format!("\n{statement}\n"));
+                for (i, statement) in statements.iter().enumerate() {
+                    output.push_str(&format!("{}", statement.display(indentation)));
+                    if i != statements.len() - 1 {
+                        output.push('\n');
+                    }
                 }
             }
 
-            _ => todo!(),
+            Self::Expression(expr) => {
+                output.push_str(&format!(
+                    "{str_indent}(Expr\n{})",
+                    expr.clone().display(indentation + 2)
+                ));
+            }
+
+            Self::General(global_node) => {
+                output.push_str(&global_node.display(indentation));
+            }
+
+            Self::Return(expr) => {
+                output.push_str(&format!("{str_indent}(Return"));
+
+                if let Some(expr) = expr {
+                    output.push_str(&format!(" {}", &pretty_clean_string(&expr.to_string())));
+                }
+
+                output.push(')');
+            }
+
+            Self::If(if_statement) => {
+                output.push_str(&if_statement.display(indentation));
+            }
+
+            Self::Semicolon => {
+                output.push_str(&format!("{str_indent}(Op ;)"));
+            }
         }
 
         output
@@ -228,43 +243,109 @@ fn parse_data_type(lexer: &mut Lexer) -> Result<Vec<GlobalNode>, String> {
         return parse_union_keyword(lexer);
     }
 
-    Ok(vec![parse_function_or_var(lexer)?])
+    Ok(parse_function_or_var(lexer)?)
 }
 
-fn parse_function_or_var(lexer: &mut Lexer) -> Result<GlobalNode, String> {
-    let mut is_function = false;
+fn parse_function_or_var(lexer: &mut Lexer) -> Result<Vec<GlobalNode>, String> {
     lexer.set_flag();
 
-    let mut found_identifier = false;
-    while let Some(token) = lexer.next()
-        && !matches!(token, TokenTypes::Semicolon)
-        && !matches!(token, TokenTypes::Assignment(_))
-    {
-        if matches!(token, TokenTypes::Operator(OperatorTypes::LParen)) {
-            // if we already found a parenthesiss if we found the variable already it must be a function
-            // otherwise its just a type with parenthesis around its variable name
-            is_function = found_identifier;
-            break;
-        }
+    let type_parsed = parse_type(lexer)?;
+    let is_function = matches!(type_parsed, TypeNode::Function { .. });
 
-        if matches!(token, TokenTypes::Identifier(_)) {
-            found_identifier = true;
-        }
+    if is_function {
+        return Ok(vec![parse_function(lexer, &type_parsed)?]);
     }
 
     lexer.recede_to_flag();
+    let variables = parse_variable_statement(lexer)?;
 
-    match is_function {
-        true => parse_function(lexer),
-        false => todo!(), // false => Ok(GlobalNode::Variable {
-                          //     expr_statement: parse_statement(lexer)?,
-                          // }),
+    Ok(variables)
+}
+
+fn parse_function(lexer: &mut Lexer, signature: &TypeNode) -> Result<GlobalNode, String> {
+    let next_token = lexer.force_peek(
+        "Expected semicolon or left curly brace after function signature, got nothing",
+    )?;
+
+    if matches!(next_token, TokenTypes::Semicolon) {
+        lexer.advance();
+        return Ok(GlobalNode::Function {
+            signature: Box::new(signature.clone()),
+            body: None,
+        });
     }
+
+    lexer.expect(|x| matches!(x, TokenTypes::LCurlyBrace))?;
+
+    let body = parse_block(lexer)?;
+
+    Ok(GlobalNode::Function {
+        signature: Box::new(signature.clone()),
+        body: Some(body),
+    })
+}
+
+pub fn is_expression(token: &TokenTypes) -> bool {
+    match token {
+        TokenTypes::Literal(_) => true,
+        TokenTypes::Operator(OperatorTypes::LParen) => true,
+        TokenTypes::Identifier(_) => true,
+        TokenTypes::Operator(op) if op.potential_unary() => true,
+        TokenTypes::Keyword(KeywordTypes::Sizeof) => true,
+        _ => false,
+    }
+}
+
+/// Parses the statements within a block
+/// This includes anything between a left and right curly brace that is not attached to a tag type
+pub fn parse_block(lexer: &mut Lexer) -> Result<StatementNode, String> {
+    let mut block = Vec::new();
+
+    let to_statement = |x: Vec<GlobalNode>| -> Vec<StatementNode> {
+        x.iter()
+            .map(|x| StatementNode::General(Box::new(x.clone())))
+            .collect()
+    };
+
+    while let Some(token) = lexer.peek()
+        && !matches!(token, TokenTypes::RCurlyBrace)
+    {
+        match token {
+            TokenTypes::DataType(_) => {
+                block.extend(to_statement(parse_data_type(lexer)?));
+            }
+
+            x if is_expression(&x) => {
+                block.push(StatementNode::Expression(parse_expression(lexer, 0)?));
+                lexer.expect(|x| matches!(x, TokenTypes::Semicolon))?;
+            }
+
+            TokenTypes::Keyword(keyword) => match keyword {
+                KeywordTypes::Struct => block.extend(to_statement(parse_struct_keyword(lexer)?)),
+                KeywordTypes::Enum => block.extend(to_statement(parse_enum_keyword(lexer)?)),
+                KeywordTypes::Union => block.extend(to_statement(parse_union_keyword(lexer)?)),
+                KeywordTypes::Return => block.push(parse_return(lexer)?),
+                KeywordTypes::If => block.push(parse_if_statement(lexer)?),
+                _ => todo!(),
+            },
+
+            TokenTypes::Semicolon => {
+                lexer.advance();
+                block.push(StatementNode::Semicolon);
+            }
+
+            _ => todo!(),
+        }
+    }
+
+    lexer.expect(|x| matches!(x, TokenTypes::RCurlyBrace))?;
+
+    Ok(StatementNode::Block { statements: block })
 }
 
 /// A high level variable parser
 /// Does not support struct parsing
-pub fn parse_statement(lexer: &mut Lexer) -> Result<Vec<StatementNode>, String> {
+pub fn parse_variable_statement(lexer: &mut Lexer) -> Result<Vec<GlobalNode>, String> {
     let mut var_type = parse_type(lexer)?;
 
     let next_token = lexer.force_peek("Expected end of var, got nothing")?;
@@ -272,7 +353,7 @@ pub fn parse_statement(lexer: &mut Lexer) -> Result<Vec<StatementNode>, String> 
     if matches!(next_token, TokenTypes::Semicolon) {
         lexer.advance();
 
-        let final_var = StatementNode::Expression {
+        let final_var = GlobalNode::Initalizer {
             var_type: var_type.clone(),
             r_value: None,
         };
@@ -288,14 +369,14 @@ pub fn parse_statement(lexer: &mut Lexer) -> Result<Vec<StatementNode>, String> 
     ) {
         lexer.advance();
 
-        let first_var = StatementNode::Expression {
+        let first_var = GlobalNode::Initalizer {
             var_type: var_type.clone(),
             r_value: Some(parse_expression(lexer, 3)?),
         };
 
         all_vars.push(first_var);
     } else if matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma)) {
-        let first_var = StatementNode::Expression {
+        let first_var = GlobalNode::Initalizer {
             var_type: var_type.clone(),
             r_value: None,
         };
@@ -308,60 +389,6 @@ pub fn parse_statement(lexer: &mut Lexer) -> Result<Vec<StatementNode>, String> 
     all_vars.extend(additional_vars);
 
     Ok(all_vars)
-}
-
-fn parse_function(lexer: &mut Lexer) -> Result<GlobalNode, String> {
-    let return_type = parse_type(lexer)?;
-
-    let function_name = lexer.expect_extract(|x| match x {
-        TokenTypes::Identifier(identifier) => Some(identifier),
-        _ => None,
-    })?;
-
-    lexer.expect(|x| matches!(x, TokenTypes::Operator(OperatorTypes::LParen)))?;
-
-    let param_list = parse_parameter_list(lexer)?;
-
-    let final_function;
-
-    let Some(next_token) = lexer.peek() else {
-        return Err(String::from("Expected end of function, got nothing"));
-    };
-
-    match next_token {
-        TokenTypes::Semicolon => {
-            final_function = GlobalNode::Function {
-                name: function_name,
-                return_type,
-                params: param_list,
-                body: None,
-            }
-        }
-
-        TokenTypes::LCurlyBrace => {
-            final_function = GlobalNode::Function {
-                name: function_name,
-                return_type,
-                params: param_list,
-                body: Some(parse_block(lexer)?),
-            }
-        }
-
-        _ => {
-            return Err(String::from(format!(
-                "Got unexpected token {:?}",
-                next_token
-            )));
-        }
-    }
-
-    lexer.advance();
-
-    Ok(final_function)
-}
-
-fn parse_block(lexer: &mut Lexer) -> Result<StatementNode, String> {
-    todo!()
 }
 
 pub const STOP_AT_COMMA: bool = false;

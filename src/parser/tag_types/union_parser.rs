@@ -89,11 +89,9 @@ fn parse_nested_tag_type(lexer: &mut Lexer) -> Result<Option<Vec<UnionMember>>, 
             GlobalNode::Enum(data) => UnionMember::DefinedEnum(data),
             GlobalNode::Union(data) => UnionMember::DefinedUnion(data),
 
-            GlobalNode::Variable(StatementNode::Expression { var_type, .. }) => {
-                UnionMember::NormalType {
-                    item_type: var_type,
-                }
-            }
+            GlobalNode::Initalizer { var_type, .. } => UnionMember::NormalType {
+                item_type: var_type,
+            },
 
             _ => unreachable!(),
         };

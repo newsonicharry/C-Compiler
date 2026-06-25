@@ -68,6 +68,12 @@ pub enum TypeNode {
         name: Option<String>,
         qualifiers: Vec<DataTypes>,
     },
+
+    Function {
+        name: String,
+        return_type: Box<TypeNode>,
+        parameters: Vec<TypeNode>,
+    },
 }
 
 impl TypeNode {
@@ -109,6 +115,10 @@ impl TypeNode {
             | TypeNode::Normal { held_value, .. }
             | TypeNode::Pointer { held_value, .. }
             | TypeNode::Array { held_value, .. } => !matches!(held_value.as_ref(), TypeNode::Empty),
+
+            TypeNode::Function { return_type, .. } => {
+                !matches!(return_type.as_ref(), TypeNode::Empty)
+            }
             _ => false,
         };
 
@@ -121,6 +131,8 @@ impl TypeNode {
             | TypeNode::Normal { held_value, .. }
             | TypeNode::Pointer { held_value, .. }
             | TypeNode::Array { held_value, .. } => held_value.get_most_nested_layer(),
+
+            TypeNode::Function { return_type, .. } => return_type.get_most_nested_layer(),
             _ => unreachable!(),
         }
     }
@@ -132,6 +144,10 @@ impl TypeNode {
             | Self::Pointer { held_value, .. }
             | Self::Array { held_value, .. } => {
                 held_value.set_most_nested_held_value(nested_value);
+            }
+
+            Self::Function { return_type, .. } => {
+                return_type.set_most_nested_held_value(nested_value);
             }
 
             Self::Empty => *self = nested_value.clone(),
@@ -255,6 +271,27 @@ impl TypeNode {
                 Self::display_tag_type(&mut output, name, qualifiers);
             }
 
+            TypeNode::Function {
+                name,
+                return_type,
+                parameters,
+            } => {
+                output.push_str(&format!(
+                    "(Function {name} (Return {})",
+                    Self::display(return_type)
+                ));
+
+                if !parameters.is_empty() {
+                    output.push_str(" (Params");
+                    for parameter in parameters {
+                        output.push_str(&format!(" {}", parameter));
+                    }
+                    output.push(')');
+                }
+
+                output.push(')');
+            }
+
             TypeNode::Empty => {}
         }
 
@@ -292,6 +329,17 @@ pub fn parse_type(lexer: &mut Lexer) -> Result<TypeNode, String> {
                 // this is true if its a function's return type
                 // if thats the case then we dont want to pick up its name and we break
                 if let Some(TokenTypes::Operator(OperatorTypes::LParen)) = lexer.forward_peek() {
+                    lexer.advance(); // moves past the identifier
+                    lexer.advance(); // moves past the left parenthesis
+
+                    let params = parse_parameter_list(lexer)?;
+
+                    final_type = TypeNode::Function {
+                        name: identifier,
+                        return_type: Box::new(TypeNode::Empty),
+                        parameters: params,
+                    };
+
                     break;
                 }
 
