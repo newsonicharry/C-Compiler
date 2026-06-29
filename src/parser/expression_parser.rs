@@ -234,11 +234,11 @@ impl ExprNode {
             }
 
             Self::PostInc => {
-                output.push_str(&format!("{indent_str}(PostInc)\n"));
+                output.push_str(&format!("{indent_str}(PostInc)"));
             }
 
             Self::PostDec => {
-                output.push_str(&format!("{indent_str}(PostDec)\n"));
+                output.push_str(&format!("{indent_str}(PostDec)"));
             }
 
             Self::FunctionCall { args, nested_call } => {

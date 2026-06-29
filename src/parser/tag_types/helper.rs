@@ -5,7 +5,6 @@ use crate::lexer::language_features::OperatorTypes;
 use crate::lexer::lexer::{Lexer, TokenTypes};
 use crate::parser::expression_parser::parse_expression;
 use crate::parser::parser::GlobalNode;
-use crate::parser::parser::StatementNode;
 use crate::parser::parser::parse_variable_statement;
 use crate::parser::tag_types::enum_parser::EnumMember;
 use crate::parser::tag_types::enum_parser::parse_enum_keyword;
@@ -163,7 +162,7 @@ pub fn tag_type_keyword_usage(lexer: &mut Lexer) -> Result<TagKeywordUsage, Stri
 /// Used within the main parser to determine if it should go to the struct parser
 pub fn is_tag_type_keyword(lexer: &mut Lexer, keyword: &KeywordTypes) -> Result<bool, String> {
     lexer.set_flag();
-    parse_tag_type_qualifiers(lexer);
+    let _ = parse_tag_type_qualifiers(lexer);
 
     let curr_token = lexer.force_peek("Expected next token, got nothing")?;
     if curr_token == TokenTypes::Keyword(*keyword) {

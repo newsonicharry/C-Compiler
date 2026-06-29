@@ -152,7 +152,7 @@ mod tests {
             (
                 " enum Color {RED, GREEN, BLUE}; ",
                 "
-                (Enum Color (Members 
+                (Enum Color (Members
                     (Member (Name RED))
                     (Member (Name GREEN))
                     (Member (Name BLUE))
@@ -168,7 +168,7 @@ mod tests {
                     (Member (Name GREEN))
                     (Member (Name BLUE))
                 ))
-                (Variable (Name c (Enum Color)))                    
+                (Variable (Name c (Enum Color)))
                 ",
             ),
             (
@@ -188,7 +188,7 @@ mod tests {
                     (Member (Name NEG) (Value (Unary (Op -) (Num 1))))
                     (Member (Name ZERO) (Value (Num 0)))
                     (Member (Name POS) (Value (Num 1)))
-                ))  
+                ))
                 ",
             ),
             (
@@ -201,7 +201,7 @@ mod tests {
                         (Binary (Var A) (Op *) (Num 4))))
                     (Member (Name C) (Value
                         (Binary (Var B) (Op <<) (Num 1))))
-                ))                
+                ))
                 ",
             ),
             (
@@ -211,7 +211,7 @@ mod tests {
                     (Member (Name A))
                     (Member (Name B))
                     (Member (Name C))
-                ))                  
+                ))
                 ",
             ),
             ("enum Color;", "(Enum Color)"),

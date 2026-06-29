@@ -358,6 +358,9 @@ pub fn parse_type(lexer: &mut Lexer) -> Result<TypeNode, String> {
             | TokenTypes::Keyword(KeywordTypes::Struct)
             | TokenTypes::Keyword(KeywordTypes::Enum)
             | TokenTypes::Keyword(KeywordTypes::Union) => {
+                if original_type.is_some() {
+                    return Err(String::from("Unexpected data type in type parser"));
+                }
                 original_type = Some(parse_normal_type(lexer)?);
             }
 

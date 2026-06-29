@@ -3,6 +3,7 @@ use crate::lexer::lexer::{Lexer, TokenTypes};
 
 use std::collections::HashMap;
 
+#[allow(dead_code)]
 struct TypedefCollection {
     typedefs: HashMap<String, i32>,
 }

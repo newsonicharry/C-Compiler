@@ -1,11 +1,11 @@
 use std::{
     fmt::Display,
     iter::Peekable,
-    str::{Chars, FromStr},
+    str::{CharIndices, FromStr},
 };
 
 use crate::lexer::{
-    escape_sequences::{CharType, split_string},
+    escape_sequences::split_string,
     language_features::{AssignmentTypes, DataTypes, KeywordTypes, LiteralTypes, OperatorTypes},
     number_parser::parse_number_literal,
 };
@@ -36,9 +36,9 @@ impl Display for TokenTypes {
             TokenTypes::Identifier(x) => format!("identifier {x}"),
             TokenTypes::Keyword(x) => format!("keyword {x}"),
             TokenTypes::DataType(x) => format!("datatype {x}"),
-            TokenTypes::Operator(x) => format!("operator {x}"),
             TokenTypes::Assignment(x) => format!("assignment {x}"),
             TokenTypes::Literal(x) => format!("literal {x}"),
+            TokenTypes::Operator(x) => format!("operator {}", x.operator_in_words()),
         };
 
         write!(display, "{final_str}")
@@ -47,7 +47,7 @@ impl Display for TokenTypes {
 
 #[derive(Default, Debug)]
 pub struct Lexer {
-    tokens: Vec<TokenTypes>,
+    tokens: Vec<(TokenTypes, usize)>,
     set_index: usize,
     curr_index: usize,
 }
@@ -56,45 +56,55 @@ impl Lexer {
     pub fn new(input: &str) -> Result<Lexer, String> {
         let mut lexer = Lexer::default();
 
-        let input = Self::clean_comments(input);
-        let input = input.split('\n').collect::<Vec<&str>>().join(" ");
+        let chars = &mut input.char_indices().peekable();
+        while let Some((index, char)) = chars.peek().cloned() {
+            let next_char = chars.clone().nth(1);
+            let next_char_is_digit = next_char.unwrap_or((0, ' ')).1.is_digit(10);
 
-        let chars = &mut input.chars().peekable();
-        loop {
-            if let None = chars.peek() {
-                break;
+            if next_char.is_some() && char == '/' && next_char.unwrap().1 == '/' {
+                Self::clean_single_line_comment(chars);
+                continue;
             }
 
-            let char = *chars.peek().unwrap();
-            let next_char = chars.clone().nth(1);
-            let next_char_is_digit = next_char.unwrap_or(' ').is_digit(10);
-
-            let mut push_and_skip = |token: TokenTypes| {
-                lexer.tokens.push(token);
-                chars.next();
-            };
+            if next_char.is_some() && char == '/' && next_char.unwrap().1 == '*' {
+                Self::clean_multi_line_comment(chars);
+                continue;
+            }
 
             match char {
-                ';' => push_and_skip(TokenTypes::Semicolon),
-                '{' => push_and_skip(TokenTypes::LCurlyBrace),
-                '}' => push_and_skip(TokenTypes::RCurlyBrace),
+                ';' => {
+                    lexer.tokens.push((TokenTypes::Semicolon, index));
+                    chars.next();
+                }
+                '{' => {
+                    lexer.tokens.push((TokenTypes::LCurlyBrace, index));
+                    chars.next();
+                }
+                '}' => {
+                    lexer.tokens.push((TokenTypes::RCurlyBrace, index));
+                    chars.next();
+                }
 
                 '\"' => {
-                    lexer.tokens.push(Self::parse_string_literal(chars)?);
+                    lexer
+                        .tokens
+                        .push((Self::parse_string_literal(chars)?, index));
                 }
 
                 '\'' => {
-                    lexer.tokens.push(Self::parse_char_literal(chars)?);
+                    lexer.tokens.push((Self::parse_char_literal(chars)?, index));
                 }
                 c if c.is_alphabetic() || c == '_' => {
-                    lexer.tokens.push(Self::parse_keyword_or_identifier(chars));
+                    lexer
+                        .tokens
+                        .push((Self::parse_keyword_or_identifier(chars), index));
                 }
 
                 c if c.is_digit(10) || (c == '.' && next_char_is_digit) => {
-                    lexer.tokens.push(parse_number_literal(chars)?);
+                    lexer.tokens.push((parse_number_literal(chars)?, index));
                 }
                 c if c.is_ascii_punctuation() && c != ';' && c != '_' => {
-                    lexer.tokens.push(Self::parse_symbol(chars));
+                    lexer.tokens.push((Self::parse_symbol(chars), index));
                 }
                 _ => {
                     chars.next();
@@ -105,66 +115,29 @@ impl Lexer {
         Ok(lexer)
     }
 
-    fn clean_comments(input: &str) -> String {
-        let mut final_str = String::new();
-
-        let mut all_chars = input.chars().peekable();
-        let Some(mut previous_char) = all_chars.next() else {
-            return final_str;
-        };
-
-        // early return if theres only one character in the string
-        if all_chars.peek().is_none() {
-            return final_str + &previous_char.to_string();
+    fn clean_single_line_comment(chars: &mut Peekable<CharIndices<'_>>) {
+        while let Some((_, char)) = chars.next() {
+            if char == '\n' {
+                break;
+            }
         }
-
-        let mut is_single_line_comment = false;
-        let mut is_multi_line_comment = false;
-        while let Some(char) = all_chars.next() {
-            // remove comment status
-            if is_single_line_comment && char == '\n' {
-                is_single_line_comment = false;
-                previous_char = ' '; // space because we don't want statments on different lines combining
-            } else if is_multi_line_comment && (previous_char == '*' && char == '/') {
-                is_multi_line_comment = false;
-                previous_char = ' ';
-
-                // we only use a continue here because this is 2 characters and thus
-                // our current char which is a slash would become the next previous char
-                // and that would be added
-                continue;
-            }
-
-            // add comment status
-            if previous_char == '/' && char == '/' {
-                is_single_line_comment = true;
-            } else if previous_char == '/' && char == '*' {
-                is_multi_line_comment = true;
-            }
-
-            if is_single_line_comment || is_multi_line_comment {
-                previous_char = char;
-                continue; // skip characters that are in a comment
-            }
-
-            final_str.push(previous_char);
-
-            let last_item = all_chars.peek().is_none();
-            if last_item {
-                final_str.push(char);
-            }
-
-            previous_char = char;
-        }
-
-        final_str
     }
 
-    fn parse_symbol(chars: &mut Peekable<Chars<'_>>) -> TokenTypes {
+    fn clean_multi_line_comment(chars: &mut Peekable<CharIndices<'_>>) {
+        let mut previous_char = chars.next().unwrap().1;
+        while let Some((_, char)) = chars.next() {
+            if previous_char == '*' && char == '/' {
+                break;
+            }
+            previous_char = char;
+        }
+    }
+
+    fn parse_symbol(chars: &mut Peekable<CharIndices<'_>>) -> TokenTypes {
         let mut final_string = String::from("");
         let mut final_type = TokenTypes::NoToken;
 
-        while let Some(&char) = chars.peek() {
+        while let Some(&(_, char)) = chars.peek() {
             final_string += &char.to_string();
 
             // we can abuse that all operators build upon one another
@@ -192,10 +165,10 @@ impl Lexer {
         return final_type;
     }
 
-    fn parse_char_literal(chars: &mut Peekable<Chars<'_>>) -> Result<TokenTypes, String> {
+    fn parse_char_literal(chars: &mut Peekable<CharIndices<'_>>) -> Result<TokenTypes, String> {
         chars.next();
 
-        let Some(mut previous_char) = chars.peek().cloned() else {
+        let Some((_, mut previous_char)) = chars.peek().cloned() else {
             return Err(String::from(
                 "Character literal must have associated character",
             ));
@@ -206,7 +179,7 @@ impl Lexer {
         // we use a string here because escape seqeunces are multiple characters
         let mut final_char = String::from(previous_char);
 
-        for char in chars.by_ref() {
+        for (_, char) in chars.by_ref() {
             // making sure the corresponding quote we find is not just an escape sequence
             if char == '\'' && previous_char != '\\' {
                 let as_char_type = final_char.parse()?;
@@ -223,13 +196,13 @@ impl Lexer {
         ))
     }
 
-    fn parse_string_literal(chars: &mut Peekable<Chars<'_>>) -> Result<TokenTypes, String> {
-        let mut previous_char = *chars.peek().unwrap();
+    fn parse_string_literal(chars: &mut Peekable<CharIndices<'_>>) -> Result<TokenTypes, String> {
+        let mut previous_char = chars.peek().unwrap().1;
         let mut final_string = String::new();
 
         chars.next();
 
-        for char in chars.by_ref() {
+        for (_, char) in chars.by_ref() {
             // making sure the corresponding quote we find is not just an escape sequence
             if char == '\"' && previous_char != '\\' {
                 let as_char_list = split_string(&final_string)?;
@@ -246,15 +219,15 @@ impl Lexer {
         ))
     }
 
-    fn parse_keyword_or_identifier(chars: &mut Peekable<Chars<'_>>) -> TokenTypes {
+    fn parse_keyword_or_identifier(chars: &mut Peekable<CharIndices<'_>>) -> TokenTypes {
         let mut final_string = String::from("");
 
-        while let Some(&char) = chars.peek() {
+        while let Some((_, char)) = chars.peek().cloned() {
             // since a function or variable can have a underscore we cant end on that
-            if char == ' ' || char.is_ascii_punctuation() && char != '_' {
+            if char == ' ' || char == '\n' || char.is_ascii_punctuation() && char != '_' {
                 break;
             }
-            final_string += &chars.next().unwrap().to_string();
+            final_string += &chars.next().unwrap().1.to_string();
         }
 
         let try_as_keyword = KeywordTypes::from_str(&final_string);
@@ -271,19 +244,79 @@ impl Lexer {
         return TokenTypes::Identifier(final_string);
     }
 
+    fn get_all_tokens_types() -> Vec<TokenTypes> {
+        let all_operators = OperatorTypes::MAPPINGS.map(|x| TokenTypes::Operator(x.1));
+        let all_assignment_types = AssignmentTypes::MAPPINGS.map(|x| TokenTypes::Assignment(x.1));
+        let all_data_types = DataTypes::MAPPINGS.map(|x| TokenTypes::DataType(x.1));
+        let all_keyword_types = KeywordTypes::MAPPINGS.map(|x| TokenTypes::Keyword(x.1));
+
+        let mut all_token_types = vec![
+            TokenTypes::LCurlyBrace,
+            TokenTypes::RCurlyBrace,
+            TokenTypes::Semicolon,
+            TokenTypes::Identifier(String::new()),
+        ];
+        all_token_types.extend(all_operators);
+        all_token_types.extend(all_assignment_types);
+        all_token_types.extend(all_data_types);
+        all_token_types.extend(all_keyword_types);
+
+        all_token_types
+    }
+
+    fn brute_force_expect_correct_token<F>(enum_match: F) -> Option<TokenTypes>
+    where
+        F: Fn(&TokenTypes) -> bool,
+    {
+        for token_type in Self::get_all_tokens_types() {
+            if enum_match(&token_type) {
+                return Some(token_type);
+            }
+        }
+
+        None
+    }
+
+    fn brute_force_expect_extract_correct_token<F, T>(enum_match: F) -> Option<TokenTypes>
+    where
+        F: Fn(TokenTypes) -> Option<T>,
+    {
+        for token_type in Self::get_all_tokens_types() {
+            if enum_match(token_type.clone()).is_some() {
+                return Some(token_type);
+            }
+        }
+
+        None
+    }
+
     pub fn check<F>(&mut self, enum_match: F) -> Result<TokenTypes, String>
     where
         F: Fn(&TokenTypes) -> bool,
     {
         let Some(token) = self.peek() else {
+            if let Some(correct_token) = Self::brute_force_expect_correct_token(enum_match) {
+                return Err(format!(
+                    "Expected another token of type {}, got nothing",
+                    correct_token.to_string().to_lowercase()
+                ));
+            }
+
             return Err(String::from("Expected another token, got nothing"));
         };
 
-        enum_match(&token)
-            .then_some(self.peek().unwrap())
-            .ok_or(String::from(format!(
-                "Got unexpected token of type {token}"
-            )))
+        if !enum_match(&token) {
+            if let Some(correct_token) = Self::brute_force_expect_correct_token(enum_match) {
+                return Err(format!(
+                    "Got unexpected token of type {token}, expected token of type {}",
+                    correct_token.to_string().to_lowercase()
+                ));
+            }
+
+            return Err(format!("Got unexpected token of type {token}"));
+        }
+
+        Ok(self.peek().unwrap())
     }
 
     pub fn expect<F>(&mut self, enum_match: F) -> Result<TokenTypes, String>
@@ -300,15 +333,36 @@ impl Lexer {
         F: Fn(TokenTypes) -> Option<T>,
     {
         let Some(token) = self.peek() else {
+            if let Some(correct_token) = Self::brute_force_expect_extract_correct_token(enum_match)
+            {
+                return Err(format!(
+                    "Expected another token of type {}, got nothing",
+                    correct_token.to_string().to_lowercase()
+                ));
+            }
+
             return Err(String::from("Expected another token, got nothing"));
         };
 
-        enum_match(token)
-            .and_then(|x| {
-                self.advance();
-                Some(x)
-            })
-            .ok_or(String::from(format!("Unexpected token {:?}", self.peek())))
+        let result = enum_match(token.clone());
+
+        if result.is_none() {
+            if let Some(correct_token) = Self::brute_force_expect_extract_correct_token(enum_match)
+            {
+                return Err(format!(
+                    "Got unexpected token of type {token}, expected token of type {}",
+                    correct_token.to_string().to_lowercase()
+                ));
+            }
+
+            return Err(String::from(format!(
+                "Got unexpected token {}",
+                self.peek().unwrap()
+            )));
+        }
+
+        self.advance();
+        Ok(result.unwrap())
     }
 
     pub fn peek(&self) -> Option<TokenTypes> {
@@ -316,7 +370,7 @@ impl Lexer {
             return None;
         }
 
-        Some(self.tokens[self.curr_index].clone())
+        Some(self.tokens[self.curr_index].0.clone())
     }
 
     pub fn force_peek(&self, err_msg: &'static str) -> Result<TokenTypes, String> {
@@ -324,7 +378,7 @@ impl Lexer {
             return Err(err_msg.to_string());
         }
 
-        Ok(self.tokens[self.curr_index].clone())
+        Ok(self.tokens[self.curr_index].0.clone())
     }
 
     pub fn set_flag(&mut self) {
@@ -335,10 +389,6 @@ impl Lexer {
         self.curr_index = self.set_index;
     }
 
-    pub fn recede(&mut self) {
-        self.curr_index -= 1;
-    }
-
     pub fn forward_peek(&self) -> Option<TokenTypes> {
         let new_index = self.curr_index + 1;
 
@@ -346,7 +396,7 @@ impl Lexer {
             return None;
         }
 
-        Some(self.tokens[new_index].clone())
+        Some(self.tokens[new_index].0.clone())
     }
 
     pub fn advance(&mut self) {
@@ -360,8 +410,14 @@ impl Lexer {
         })
     }
 
-    pub fn get_tokens(&self) -> &Vec<TokenTypes> {
+    pub fn get_tokens(&self) -> &Vec<(TokenTypes, usize)> {
         &self.tokens
+    }
+
+    pub fn last_index(&self) -> usize {
+        let curr_index = self.curr_index.min(self.tokens.len().saturating_sub(2));
+
+        self.tokens[curr_index].1
     }
 }
 
@@ -373,7 +429,7 @@ impl Display for Lexer {
             output.push_str(&(String::from("[") + name + ": " + value + " ]\n"))
         };
 
-        for token in self.get_tokens() {
+        for (token, _) in self.get_tokens() {
             match token {
                 TokenTypes::Identifier(x) => add_token("IDENTIFIER", x),
                 TokenTypes::Operator(x) => add_token("OPERATOR", &x.to_string()),

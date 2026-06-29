@@ -3,8 +3,8 @@ use crate::lexer::language_features::{AssignmentTypes, OperatorTypes};
 use crate::lexer::lexer::{Lexer, TokenTypes};
 use crate::parser::aggregate_init::{AggregateInit, parse_aggregate_init};
 use crate::parser::expression_parser::{ExprNode, parse_expression};
-use crate::parser::helper::pretty_clean_string;
-use crate::parser::statement_keywords::{IfStatement, parse_if_statement, parse_return};
+use crate::parser::helper::{pretty_clean_string, to_statement};
+use crate::parser::statement_keywords::{IfStatement, JumpLabel, parse_single_statement};
 use crate::parser::tag_types::enum_parser::{EnumMember, parse_enum_keyword};
 use crate::parser::tag_types::helper::{TagType, is_tag_type_keyword, parse_vars_after_type};
 use crate::parser::tag_types::struct_parser::{StructMember, parse_struct_keyword};
@@ -79,7 +79,7 @@ impl GlobalNode {
                 output.push_str(&format!("{str_indent}(Variable {var_type}"));
 
                 if let Some(expression) = r_value.clone() {
-                    output.push_str(&format!("{}", &expression.display(indentation + 2)));
+                    output.push_str(&format!("\n{}", &expression.display(indentation + 2)));
                 }
 
                 output.push_str(")");
@@ -105,15 +105,44 @@ impl GlobalNode {
 #[derive(Clone)]
 pub enum StatementNode {
     // block, expression, if, switch, while, do, for, return, break, continue, goto, label, case, default
-    Block { statements: Vec<StatementNode> },
+    Block {
+        statements: Vec<StatementNode>,
+    },
 
     General(Box<GlobalNode>),
     Expression(ExprNode),
 
     Return(Option<ExprNode>),
+    Break,
+    Continue,
     If(Box<IfStatement>),
 
+    While {
+        conditional: ExprNode,
+        body: Box<StatementNode>,
+    },
+
+    DoWhile {
+        conditional: ExprNode,
+        body: Box<StatementNode>,
+    },
+
+    For {
+        init: Option<Box<StatementNode>>,
+        condition: Option<ExprNode>,
+        iteration: Option<ExprNode>,
+        body: Box<StatementNode>,
+    },
+
     Semicolon,
+
+    Switch {
+        case_label: ExprNode,
+        body: Box<StatementNode>,
+    },
+
+    JumpLabel(JumpLabel),
+    GotoStatement(String),
 }
 
 #[derive(Clone, Debug)]
@@ -152,6 +181,7 @@ impl StatementNode {
     pub fn display(&self, indentation: usize) -> String {
         let mut output = String::new();
         let str_indent = " ".repeat(indentation);
+        let next_str_indent = " ".repeat(indentation + 2);
 
         match self {
             Self::Block { statements } => {
@@ -191,6 +221,90 @@ impl StatementNode {
             Self::Semicolon => {
                 output.push_str(&format!("{str_indent}(Op ;)"));
             }
+
+            Self::Break => {
+                output.push_str(&format!("{str_indent}(Break)"));
+            }
+
+            Self::Continue => {
+                output.push_str(&format!("{str_indent}(Continue)"));
+            }
+
+            Self::While { conditional, body } => {
+                output.push_str(&format!("{str_indent}(While\n"));
+                output.push_str(&format!(
+                    "{next_str_indent}(Condition\n{})\n",
+                    conditional.clone().display(indentation + 4)
+                ));
+
+                output.push_str(&format!(
+                    "{next_str_indent}(Body\n{})",
+                    body.display(indentation + 4)
+                ));
+            }
+
+            Self::DoWhile { conditional, body } => {
+                output.push_str(&format!("{str_indent}(DoWhile\n"));
+                output.push_str(&format!(
+                    "{next_str_indent}(Condition\n{})\n",
+                    conditional.clone().display(indentation + 4)
+                ));
+
+                output.push_str(&format!(
+                    "{next_str_indent}(Body\n{})",
+                    body.display(indentation + 4)
+                ));
+            }
+
+            Self::For {
+                init,
+                condition,
+                iteration,
+                body,
+            } => {
+                output.push_str(&format!("{str_indent}(For\n"));
+
+                output.push_str(&format!("{next_str_indent}(Init"));
+                if let Some(init) = init {
+                    output.push_str(&format!("\n{}", init.display(indentation + 4)));
+                }
+                output.push(')');
+
+                output.push_str(&format!("\n{next_str_indent}(Body"));
+                if let Some(condition) = condition {
+                    output.push_str(&format!("\n{}", condition.clone().display(indentation + 4)));
+                }
+
+                output.push(')');
+
+                output.push_str(&format!("\n{next_str_indent}(Iterate"));
+                if let Some(iteration) = iteration {
+                    output.push_str(&format!("\n{}", iteration.clone().display(indentation + 4)));
+                }
+
+                output.push(')');
+
+                output.push_str(&format!(
+                    "\n{next_str_indent}(Body\n{})",
+                    body.display(indentation + 4)
+                ));
+            }
+
+            Self::Switch { case_label, body } => {
+                output.push_str(&format!(
+                    "{str_indent}(Switch (CaseLabel {})\n{})",
+                    pretty_clean_string(&case_label.to_string()),
+                    body.display(indentation + 2)
+                ));
+            }
+
+            Self::JumpLabel(jump_label) => {
+                output.push_str(&format!("{str_indent}{jump_label}"));
+            }
+
+            Self::GotoStatement(label) => {
+                output.push_str(&format!("{str_indent}(Goto {label})"));
+            }
         }
 
         output
@@ -206,7 +320,6 @@ pub fn parse_program(lexer: &mut Lexer) -> Result<Root, String> {
             // do something
             continue;
         }
-
         match token {
             TokenTypes::Keyword(keyword) => match keyword {
                 KeywordTypes::Struct => root.0.extend(parse_struct_keyword(lexer)?),
@@ -248,7 +361,6 @@ fn parse_data_type(lexer: &mut Lexer) -> Result<Vec<GlobalNode>, String> {
 
 fn parse_function_or_var(lexer: &mut Lexer) -> Result<Vec<GlobalNode>, String> {
     lexer.set_flag();
-
     let type_parsed = parse_type(lexer)?;
     let is_function = matches!(type_parsed, TypeNode::Function { .. });
 
@@ -276,7 +388,6 @@ fn parse_function(lexer: &mut Lexer, signature: &TypeNode) -> Result<GlobalNode,
     }
 
     lexer.expect(|x| matches!(x, TokenTypes::LCurlyBrace))?;
-
     let body = parse_block(lexer)?;
 
     Ok(GlobalNode::Function {
@@ -301,40 +412,24 @@ pub fn is_expression(token: &TokenTypes) -> bool {
 pub fn parse_block(lexer: &mut Lexer) -> Result<StatementNode, String> {
     let mut block = Vec::new();
 
-    let to_statement = |x: Vec<GlobalNode>| -> Vec<StatementNode> {
-        x.iter()
-            .map(|x| StatementNode::General(Box::new(x.clone())))
-            .collect()
-    };
-
     while let Some(token) = lexer.peek()
         && !matches!(token, TokenTypes::RCurlyBrace)
     {
         match token {
-            TokenTypes::DataType(_) => {
-                block.extend(to_statement(parse_data_type(lexer)?));
+            TokenTypes::Keyword(KeywordTypes::Struct) => {
+                block.extend(to_statement(parse_struct_keyword(lexer)?))
+            }
+            TokenTypes::Keyword(KeywordTypes::Enum) => {
+                block.extend(to_statement(parse_enum_keyword(lexer)?))
             }
 
-            x if is_expression(&x) => {
-                block.push(StatementNode::Expression(parse_expression(lexer, 0)?));
-                lexer.expect(|x| matches!(x, TokenTypes::Semicolon))?;
+            TokenTypes::Keyword(KeywordTypes::Union) => {
+                block.extend(to_statement(parse_union_keyword(lexer)?))
             }
 
-            TokenTypes::Keyword(keyword) => match keyword {
-                KeywordTypes::Struct => block.extend(to_statement(parse_struct_keyword(lexer)?)),
-                KeywordTypes::Enum => block.extend(to_statement(parse_enum_keyword(lexer)?)),
-                KeywordTypes::Union => block.extend(to_statement(parse_union_keyword(lexer)?)),
-                KeywordTypes::Return => block.push(parse_return(lexer)?),
-                KeywordTypes::If => block.push(parse_if_statement(lexer)?),
-                _ => todo!(),
-            },
+            TokenTypes::DataType(_) => block.extend(to_statement(parse_variable_statement(lexer)?)),
 
-            TokenTypes::Semicolon => {
-                lexer.advance();
-                block.push(StatementNode::Semicolon);
-            }
-
-            _ => todo!(),
+            _ => block.push(parse_single_statement(lexer)?),
         }
     }
 
@@ -349,6 +444,7 @@ pub fn parse_variable_statement(lexer: &mut Lexer) -> Result<Vec<GlobalNode>, St
     let mut var_type = parse_type(lexer)?;
 
     let next_token = lexer.force_peek("Expected end of var, got nothing")?;
+    let mut all_vars = vec![];
 
     if matches!(next_token, TokenTypes::Semicolon) {
         lexer.advance();
@@ -359,11 +455,7 @@ pub fn parse_variable_statement(lexer: &mut Lexer) -> Result<Vec<GlobalNode>, St
         };
 
         return Ok(vec![final_var]);
-    }
-
-    let mut all_vars = vec![];
-
-    if matches!(
+    } else if matches!(
         next_token,
         TokenTypes::Assignment(AssignmentTypes::SimpleAssignment)
     ) {
@@ -382,6 +474,10 @@ pub fn parse_variable_statement(lexer: &mut Lexer) -> Result<Vec<GlobalNode>, St
         };
 
         all_vars.push(first_var);
+    } else {
+        return Err(format!(
+            "Expected variable declaration to have an ending semicolon, got token of type {next_token}",
+        ));
     }
 
     let additional_vars = parse_vars_after_type::<false>(lexer, &var_type.get_most_nested_layer())?;

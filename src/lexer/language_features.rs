@@ -60,13 +60,10 @@ pub enum KeywordTypes {
     Typedef,
     Union,
     While,
-    _Complex,
-    _Imaginary,
-    Inline,
 }
 
 impl KeywordTypes {
-    const MAPPINGS: &'static [(&'static str, Self); 20] = &[
+    pub const MAPPINGS: &'static [(&'static str, Self); 17] = &[
         ("break", Self::Break),
         ("case", Self::Case),
         ("continue", Self::Continue),
@@ -84,9 +81,6 @@ impl KeywordTypes {
         ("typedef", Self::Typedef),
         ("union", Self::Union),
         ("while", Self::While),
-        ("_Complex", Self::_Complex),
-        ("_Imaginary", Self::_Imaginary),
-        ("inline", Self::Inline),
     ];
 }
 
@@ -111,13 +105,15 @@ pub enum DataTypes {
     Void,
     Volatile,
     _Bool,
+    _Complex,
     Register,
     Static,
     Extern,
+    Inline,
 }
 
 impl DataTypes {
-    const MAPPINGS: &'static [(&'static str, Self); 18] = &[
+    pub const MAPPINGS: &'static [(&'static str, Self); 20] = &[
         ("NOTYPE", Self::NoType),
         ("char", Self::Char),
         ("auto", Self::Auto),
@@ -133,9 +129,11 @@ impl DataTypes {
         ("void", Self::Void),
         ("volatile", Self::Volatile),
         ("_Bool", Self::_Bool),
+        ("_Complex", Self::_Complex),
         ("register", Self::Register),
         ("static", Self::Static),
         ("extern", Self::Extern),
+        ("inline", Self::Inline),
     ];
 
     pub fn is_storage_specifier(&self) -> bool {
@@ -147,7 +145,7 @@ impl DataTypes {
 
     pub fn is_qualifier(&self) -> bool {
         match *self {
-            // auto is not technically a qualifier but we assume it is here
+            //  auto is not technically a qualifier but we assume it is here
             Self::Const | Self::Volatile | Self::Restrict | Self::Auto => true,
             _ => false,
         }
@@ -155,7 +153,8 @@ impl DataTypes {
 
     pub fn is_modifier(&self) -> bool {
         match *self {
-            Self::Signed | Self::Unsigned | Self::Short | Self::Long => true,
+            // _Complex is techinally its own distict type but doing that would be a headache so this is used instead
+            Self::Signed | Self::Unsigned | Self::Short | Self::Long | Self::_Complex => true,
             _ => false,
         }
     }
@@ -180,7 +179,7 @@ pub enum AssignmentTypes {
 }
 
 impl AssignmentTypes {
-    const MAPPINGS: &'static [(&'static str, Self); 11] = &[
+    pub const MAPPINGS: &'static [(&'static str, Self); 11] = &[
         ("=", Self::SimpleAssignment),
         ("+=", Self::AddAssignment),
         ("-=", Self::SubAssignment),
@@ -246,7 +245,7 @@ pub enum OperatorTypes {
 }
 
 impl OperatorTypes {
-    const MAPPINGS: &'static [(&'static str, Self); 32] = &[
+    pub const MAPPINGS: &'static [(&'static str, Self); 32] = &[
         ("(UNKNOWN)", Self::NoOperator),
         (",", Self::Comma),
         ("*", Self::Star),
@@ -281,6 +280,45 @@ impl OperatorTypes {
         ("?", Self::QuestionMark),
     ];
 
+    pub fn operator_in_words(&self) -> String {
+        let output = match self {
+            Self::NoOperator => "(UNKNOWN)",
+            Self::Comma => "Comma",
+            Self::Star => "Star",
+            Self::Divide => "Slash",
+            Self::Modulus => "Modulus",
+            Self::Plus => "Plus",
+            Self::Minus => "Minus",
+            Self::BitLShift => "Bitwise Left Shift",
+            Self::BitRShift => "Bitwise Right Shift",
+            Self::Less => "Less than",
+            Self::LessOrEq => "Less than or Equal",
+            Self::Greater => "Greater than",
+            Self::GreaterOrEq => "Greater than or Equal",
+            Self::Equal => "Equality",
+            Self::NotEqual => "Inequality",
+            Self::Amperstand => "Amperstand",
+            Self::BitXOR => "Bit XOR",
+            Self::BitOr => "Bit Or",
+            Self::And => "Bit And",
+            Self::Or => "Or",
+            Self::LParen => "Left Parenthesis",
+            Self::RParen => "Right Parenthesis",
+            Self::LSquareBracket => "Left Square Bracket",
+            Self::RSquareBracket => "Right Square Bracket",
+            Self::DotOperator => "Dot",
+            Self::ArrowOperator => "Arrow",
+            Self::Inc => "Increment",
+            Self::Dec => "Decrement",
+            Self::BitNot => "Bit Not",
+            Self::Not => "Not",
+            Self::Colon => "Colon",
+            Self::QuestionMark => "Question Mark",
+        };
+
+        String::from(output)
+    }
+
     pub fn potential_unary(&self) -> bool {
         match self {
             Self::Inc
@@ -293,20 +331,6 @@ impl OperatorTypes {
             | Self::Not => true,
 
             _ => false,
-        }
-    }
-
-    pub fn potential_postfix(&self) -> bool {
-        match self {
-            Self::LParen
-            | Self::RParen
-            | Self::LSquareBracket
-            | Self::RSquareBracket
-            | Self::DotOperator
-            | Self::ArrowOperator
-            | Self::Inc
-            | Self::Dec => return true,
-            _ => return false,
         }
     }
 }

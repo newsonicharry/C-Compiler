@@ -1,6 +1,6 @@
 use crate::lexer::language_features::KeywordTypes;
 use crate::lexer::lexer::{Lexer, TokenTypes};
-use crate::parser::parser::{GlobalNode, StatementNode};
+use crate::parser::parser::GlobalNode;
 use crate::parser::tag_types::enum_parser::EnumMember;
 use crate::parser::tag_types::helper::TagTypeMember;
 use crate::parser::tag_types::helper::parse_tag_type_variable;

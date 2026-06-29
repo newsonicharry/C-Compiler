@@ -1,5 +1,5 @@
 use crate::lexer::{language_features::LiteralTypes, lexer::TokenTypes};
-use std::{fmt::Display, iter::Peekable, str::Chars};
+use std::{fmt::Display, iter::Peekable, str::CharIndices};
 
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct StoredSize {
@@ -74,13 +74,13 @@ enum PrefixTypes {
     // (GCC, Clang, MSVC), it may as well be part of the standard
 }
 
-fn get_numerical_string(chars: &mut Peekable<Chars<'_>>) -> String {
+fn get_numerical_string(chars: &mut Peekable<CharIndices<'_>>) -> String {
     let mut final_str = String::new();
 
     let mut is_hex = false;
     let mut previous_was_exponent = false;
 
-    while let Some(char) = chars.peek().cloned() {
+    while let Some((_, char)) = chars.peek().cloned() {
         let lowercase_char = char.to_ascii_lowercase();
 
         if lowercase_char == 'x' {
@@ -248,7 +248,7 @@ fn parse_decimal_floating_point(
     };
 }
 
-pub fn parse_number_literal(chars: &mut Peekable<Chars<'_>>) -> Result<TokenTypes, String> {
+pub fn parse_number_literal(chars: &mut Peekable<CharIndices<'_>>) -> Result<TokenTypes, String> {
     let mut numerical_str = get_numerical_string(chars);
     if numerical_str.contains("lL") || numerical_str.contains("lL") {
         return Err(String::from(
@@ -377,7 +377,8 @@ mod tests {
                 continue;
             }
 
-            let test_result = parse_number_literal(&mut test_case.chars().peekable()).unwrap();
+            let test_result =
+                parse_number_literal(&mut test_case.char_indices().peekable()).unwrap();
 
             if IS_INT {
                 let int_test_result = match test_result {

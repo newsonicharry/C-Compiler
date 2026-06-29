@@ -1,5 +1,6 @@
 use crate::lexer::language_features::OperatorTypes;
 use crate::lexer::lexer::{Lexer, TokenTypes};
+use crate::parser::parser::{GlobalNode, StatementNode};
 use std::fmt::Display;
 
 pub fn pretty_clean_string(string: &str) -> String {
@@ -13,6 +14,12 @@ pub fn raw_clean_string(string: &str) -> String {
     string
         .chars()
         .filter(|x| *x != '\t' && *x != ' ' && *x != '\n')
+        .collect()
+}
+
+pub fn to_statement(x: Vec<GlobalNode>) -> Vec<StatementNode> {
+    x.iter()
+        .map(|x| StatementNode::General(Box::new(x.clone())))
         .collect()
 }
 
