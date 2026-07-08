@@ -3,20 +3,19 @@ use crate::lexer::escape_sequences::CharType;
 use crate::lexer::language_features::KeywordTypes;
 use crate::lexer::language_features::LiteralTypes;
 use crate::lexer::language_features::OperatorTypes;
-use crate::lexer::lexer::{Lexer, TokenTypes};
+use crate::lexer::lexer::TokenTypes;
 use crate::lexer::number_parser::FloatType;
 use crate::lexer::number_parser::IntType;
 use crate::parser::aggregate_init::AggregateInit;
-use crate::parser::aggregate_init::parse_aggregate_init;
 use crate::parser::helper::pretty_clean_string;
 use crate::parser::helper::verify_next_in_comma_list;
+use crate::parser::parser::Parser;
 use crate::parser::type_parser::TypeNode;
-use crate::parser::type_parser::parse_type;
 
 use std::fmt::Display;
 use std::u8;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SizeOf {
     Type(TypeNode),
     Expr(ExprNode),
@@ -43,7 +42,7 @@ impl Display for SizeOf {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ExprNode {
     Empty,
     Binary {
@@ -286,433 +285,446 @@ impl Display for ExprNode {
     }
 }
 
-fn parse_cast(lexer: &mut Lexer) -> Result<ExprNode, String> {
-    let mut all_casts = Vec::new();
-
-    while let Some(TokenTypes::Operator(OperatorTypes::LParen)) = lexer.peek() {
-        let Some(future_token) = lexer.forward_peek() else {
-            return Err(format!("Expected next token in expression, got nothing"));
-        };
-
-        if !matches!(future_token, TokenTypes::DataType(_))
-            && !matches!(future_token, TokenTypes::Keyword(KeywordTypes::Struct))
-        {
-            break;
-        }
-        lexer.advance();
-
-        all_casts.push(parse_type(lexer)?);
-
-        lexer.expect(|x| matches!(x, TokenTypes::Operator(OperatorTypes::RParen)))?;
-    }
-
-    // because we cast use the rightward one first
-    all_casts.reverse();
-
-    let parsed_expr = parse_expression(lexer, u8::MAX)?;
-
-    Ok(ExprNode::Cast {
-        all_casts,
-        expr: Box::new(parsed_expr),
-    })
-}
-fn parse_size_of(lexer: &mut Lexer) -> Result<ExprNode, String> {
-    lexer.advance();
-    let token = lexer.force_peek("Expected expression after size of keyword, got nothing")?;
-
-    let is_paren = matches!(token, TokenTypes::Operator(OperatorTypes::LParen));
-    if is_paren {
-        lexer.advance();
-    }
-
-    let token = lexer.force_peek("Expected expression after size of keyword, got nothing")?;
-
-    // this is broken, ill fix later trust
-    // let is_valid_expr = is_mutable_l_value(&token);
-    let is_valid_expr = true;
-
-    let size_of_data = match token {
-        TokenTypes::DataType(_) => {
-            if !is_paren {
-                return Err(format!("Data type must be surrounded by parenthesis"));
-            }
-
-            SizeOf::Type(parse_type(lexer)?)
-        }
-
-        _ => {
-            if !is_valid_expr {
-                return Err(format!("Given sizeof does not contain a valid expression"));
-            }
-
-            if is_paren {
-                SizeOf::Expr(parse_expression(lexer, 0)?)
-            } else {
-                // max the precedence so it cant grab anything else
-                // this makes it treat it as a unary operator, but can still grab
-                // postfix values
-                SizeOf::Expr(parse_expression(lexer, u8::MAX)?)
-            }
-        }
-    };
-
-    if is_paren {
-        lexer.expect(|x| matches!(x, TokenTypes::Operator(OperatorTypes::RParen)))?;
-    }
-
-    return Ok(ExprNode::Sizeof {
-        held: Box::new(size_of_data),
-    });
-}
-
-pub fn parse_unary(lexer: &mut Lexer) -> Result<ExprNode, String> {
-    if let Some(TokenTypes::Keyword(KeywordTypes::Sizeof)) = lexer.peek() {
-        return parse_size_of(lexer);
-    }
-
-    if let Some(TokenTypes::Operator(operator_type)) = lexer.peek()
-        && (operator_type.potential_unary())
-    {
-        lexer.advance();
-        let operand = parse_unary(lexer);
-        return Ok(ExprNode::Unary {
-            operator: operator_type,
-            expr: Box::new(operand?),
-        });
-    }
-
-    return parse_primary(lexer);
-}
-
-pub fn parse_accessor_operator(lexer: &mut Lexer) -> Result<ExprNode, String> {
-    let mut expr_nodes = Vec::new();
-
-    while let Some(TokenTypes::Operator(OperatorTypes::LSquareBracket)) = lexer.peek() {
-        lexer.advance();
-        expr_nodes.push(parse_expression(lexer, 0)?);
-        lexer.expect(|x| matches!(x, TokenTypes::Operator(OperatorTypes::RSquareBracket)))?;
-    }
-
-    let mut final_accessor = ExprNode::Empty;
-
-    // we reverse it because when building the tree
-    // we have to start at the most inner most nested part
-    for node in expr_nodes.iter().rev() {
-        final_accessor = ExprNode::Accessor {
-            expr: Box::new(node.clone()),
-            nested_accessor: Box::new(final_accessor.clone()),
-        };
-    }
-
-    Ok(final_accessor)
-}
-
-pub fn parse_func_call_args(lexer: &mut Lexer) -> Result<ExprNode, String> {
-    let mut args = Vec::new();
-
-    lexer.advance(); // move past the left parenthesis
-
-    while let Some(token) = lexer.peek()
-        && !matches!(token, TokenTypes::Operator(OperatorTypes::RParen))
-    {
-        if matches!(token, TokenTypes::Operator(OperatorTypes::Comma)) {
-            return Err(format!("Unexpected comma in function call"));
-        }
-
-        // since we don't want to collect commas we start as a higher precedence level
-        // commas have a precedence of 2 so we start at 3 instead
-        args.push(parse_expression(lexer, 3)?);
-
-        verify_next_in_comma_list(lexer, TokenTypes::Operator(OperatorTypes::RParen), "abc")?;
-
-        if matches!(
-            lexer.peek(),
-            Some(TokenTypes::Operator(OperatorTypes::Comma))
-        ) {
-            lexer.advance();
-        }
-    }
-    lexer.advance();
-
-    Ok(ExprNode::FunctionCall {
-        args,
-        nested_call: Box::new(ExprNode::Empty),
-    })
-}
-
-fn parse_func_calls(lexer: &mut Lexer) -> Result<ExprNode, String> {
-    let mut func_calls = Vec::new();
-
-    while let Some(TokenTypes::Operator(OperatorTypes::LParen)) = lexer.peek() {
-        func_calls.push(parse_func_call_args(lexer)?);
-    }
-
-    // similar logic to what was done in the accessors
-    let mut final_func_call = ExprNode::Empty;
-
-    for func_call in func_calls.iter().rev() {
-        let args = match func_call {
-            ExprNode::FunctionCall { args, .. } => args.clone(),
-            _ => unreachable!(),
-        };
-
-        final_func_call = ExprNode::FunctionCall {
-            args,
-            nested_call: Box::new(final_func_call.clone()),
-        };
-    }
-
-    Ok(final_func_call)
-}
-
-fn parse_member_access(lexer: &mut Lexer) -> Result<ExprNode, String> {
-    let mut all_members = Vec::new();
-
-    while let Some(TokenTypes::Operator(op_type)) = lexer.peek() {
-        lexer.advance();
-        let member = lexer.expect_extract(|x| match x {
-            TokenTypes::Identifier(member) => Some(member),
-            _ => None,
-        })?;
-
-        all_members.push(ExprNode::MemberAccess {
-            member,
-            operator: op_type,
-            next_member: Box::new(ExprNode::Empty),
-        });
-    }
-
-    // similar logic to what was done in the accessors
-    let mut final_member = ExprNode::Empty;
-
-    for member in all_members.iter().rev() {
-        let (member_name, operator) = match member {
-            ExprNode::MemberAccess {
-                member, operator, ..
-            } => (member.clone(), operator),
-            _ => unreachable!(),
-        };
-
-        final_member = ExprNode::MemberAccess {
-            member: member_name,
-            operator: *operator,
-            next_member: Box::new(final_member.clone()),
-        };
-    }
-
-    Ok(final_member)
-}
-
-fn parse_postfix(lexer: &mut Lexer) -> Result<ExprNode, String> {
-    let mut node = ExprNode::Empty;
-
-    if let Some(TokenTypes::Identifier(identifier)) = lexer.peek() {
-        node = ExprNode::Identifier { identifier };
-        lexer.advance();
-    }
-
-    while let Some(TokenTypes::Operator(operator_type)) = lexer.peek() {
-        match operator_type {
-            OperatorTypes::Inc => {
-                node = ExprNode::PostFix {
-                    left: Box::new(node),
-                    right: Box::new(ExprNode::PostInc),
-                };
-                lexer.advance();
-            }
-            OperatorTypes::Dec => {
-                node = ExprNode::PostFix {
-                    left: Box::new(node),
-                    right: Box::new(ExprNode::PostDec),
-                };
-                lexer.advance();
-            }
-
-            OperatorTypes::LSquareBracket => {
-                node = ExprNode::PostFix {
-                    left: Box::new(node),
-                    right: Box::new(parse_accessor_operator(lexer)?),
-                };
-            }
-
-            OperatorTypes::DotOperator | OperatorTypes::ArrowOperator => {
-                let accessor_node = parse_member_access(lexer)?;
-
-                node = ExprNode::PostFix {
-                    left: Box::new(node),
-                    right: Box::new(accessor_node),
-                };
-            }
-
-            OperatorTypes::LParen => {
-                node = ExprNode::PostFix {
-                    left: Box::new(node),
-                    right: Box::new(parse_func_calls(lexer)?),
-                };
-            }
-
-            _ => break,
-        }
-    }
-
-    return Ok(node);
-}
-
-fn get_precedence(token: &TokenTypes) -> Option<u8> {
-    let precedence = match token {
-        TokenTypes::Operator(op) => match op {
-            OperatorTypes::Comma => 2,
-            OperatorTypes::Colon | OperatorTypes::QuestionMark => 3,
-            OperatorTypes::Or => 4,
-            OperatorTypes::And => 5,
-            OperatorTypes::BitOr => 6,
-            OperatorTypes::BitXOR => 7,
-            OperatorTypes::Amperstand => 8, // BitAnd
-            OperatorTypes::Equal | OperatorTypes::NotEqual => 9,
-            OperatorTypes::Greater
-            | OperatorTypes::GreaterOrEq
-            | OperatorTypes::Less
-            | OperatorTypes::LessOrEq => 10,
-            OperatorTypes::BitLShift | OperatorTypes::BitRShift => 11,
-            OperatorTypes::Plus | OperatorTypes::Minus => 12,
-            OperatorTypes::Star | OperatorTypes::Divide | OperatorTypes::Modulus => 13,
-            _ => 0,
-        },
-
-        TokenTypes::Assignment(_) => 1,
-
-        _ => 0,
-    };
-
-    if precedence == 0 {
-        return None;
-    }
-
-    Some(precedence)
-}
-
-pub fn parse_expression(lexer: &mut Lexer, min_precedence: u8) -> Result<ExprNode, String> {
-    let mut left = parse_primary(lexer)?;
-
-    while let Some(token) = lexer.peek() {
-        let Some(precedence) = get_precedence(&token) else {
-            break;
-        };
-
-        if precedence < min_precedence {
-            break;
-        }
-
-        lexer.advance();
-
-        let next_min_precedence = precedence + 1;
-
-        if matches!(token, TokenTypes::Operator(OperatorTypes::QuestionMark)) {
-            let middle = parse_expression(lexer, next_min_precedence)?;
-            lexer.expect(|x| matches!(x, TokenTypes::Operator(OperatorTypes::Colon)))?;
-            let end = parse_expression(lexer, 0)?;
-
-            left = ExprNode::Ternary {
-                if_expr: Box::new(left),
-                then_expr: Box::new(middle),
-                else_expr: Box::new(end),
+impl Parser {
+    fn parse_cast(&mut self) -> Result<ExprNode, String> {
+        let mut all_casts = Vec::new();
+
+        while let Some(TokenTypes::Operator(OperatorTypes::LParen)) = self.lexer.peek() {
+            let Some(future_token) = self.lexer.forward_peek() else {
+                return Err(format!("Expected next token in expression, got nothing"));
             };
 
-            continue;
+            if !matches!(future_token, TokenTypes::DataType(_))
+                && !matches!(future_token, TokenTypes::Keyword(KeywordTypes::Struct))
+            {
+                break;
+            }
+            self.lexer.advance();
+
+            all_casts.push(self.parse_type()?);
+
+            self.lexer
+                .expect(|x| matches!(x, TokenTypes::Operator(OperatorTypes::RParen)))?;
         }
 
-        let right = parse_expression(lexer, next_min_precedence)?;
-        left = ExprNode::Binary {
-            left: Box::new(left),
-            operator: token,
-            right: Box::new(right),
-        };
+        // because we cast use the rightward one first
+        all_casts.reverse();
+
+        let parsed_expr = self.parse_expression(u8::MAX)?;
+
+        Ok(ExprNode::Cast {
+            all_casts,
+            expr: Box::new(parsed_expr),
+        })
     }
+    fn parse_size_of(&mut self) -> Result<ExprNode, String> {
+        self.lexer.advance();
+        let token = self
+            .lexer
+            .force_peek("Expected expression after size of keyword, got nothing")?;
 
-    Ok(left)
-}
+        let is_paren = matches!(token, TokenTypes::Operator(OperatorTypes::LParen));
+        if is_paren {
+            self.lexer.advance();
+        }
 
-fn parse_primary(lexer: &mut Lexer) -> Result<ExprNode, String> {
-    if let Some(token_type) = lexer.peek() {
-        match token_type {
-            TokenTypes::Literal(literal_type) => match literal_type {
-                LiteralTypes::Integer(x) => {
-                    lexer.advance();
-                    return Ok(ExprNode::Integer { num: x });
-                }
-                LiteralTypes::Character(x) => {
-                    lexer.advance();
-                    return Ok(ExprNode::Char { character: (x) });
-                }
+        let token = self
+            .lexer
+            .force_peek("Expected expression after size of keyword, got nothing")?;
 
-                LiteralTypes::Float(x) => {
-                    lexer.advance();
-                    return Ok(ExprNode::Float { num: x });
-                }
+        // this is broken, ill fix later trust
+        // let is_valid_expr = is_mutable_l_value(&token);
+        let is_valid_expr = true;
 
-                LiteralTypes::String(x) => {
-                    lexer.advance();
-                    return Ok(ExprNode::StrType { string: x });
-                }
-            },
-
-            TokenTypes::Operator(OperatorTypes::LParen) => {
-                let Some(future_token) = lexer.forward_peek() else {
-                    return Err(format!("Expected next token in expression, got nothing"));
-                };
-
-                let node;
-                if matches!(future_token, TokenTypes::DataType(_))
-                    | matches!(future_token, TokenTypes::Keyword(KeywordTypes::Struct))
-                {
-                    node = parse_cast(lexer)?;
-                } else {
-                    lexer.advance();
-                    node = parse_expression(lexer, 0)?;
-                    lexer.expect(|x| matches!(x, TokenTypes::Operator(OperatorTypes::RParen)))?;
+        let size_of_data = match token {
+            TokenTypes::DataType(_) => {
+                if !is_paren {
+                    return Err(format!("Data type must be surrounded by parenthesis"));
                 }
 
-                return Ok(node);
-            }
-
-            TokenTypes::Identifier(_) => return parse_postfix(lexer),
-            TokenTypes::Operator(op) if op.potential_unary() => return parse_unary(lexer),
-
-            TokenTypes::Keyword(KeywordTypes::Sizeof) => return parse_unary(lexer),
-
-            TokenTypes::LCurlyBrace => {
-                return Ok(ExprNode::Aggregate {
-                    aggregate: Box::new(parse_aggregate_init(lexer)?),
-                });
+                SizeOf::Type(self.parse_type()?)
             }
 
             _ => {
-                return Err(format!(
-                    "Expected primary token in expression parser, got token of type {token_type}"
-                ));
+                if !is_valid_expr {
+                    return Err(format!("Given sizeof does not contain a valid expression"));
+                }
+
+                if is_paren {
+                    SizeOf::Expr(self.parse_expression(0)?)
+                } else {
+                    // max the precedence so it cant grab anything else
+                    // this makes it treat it as a unary operator, but can still grab
+                    // postfix values
+                    SizeOf::Expr(self.parse_expression(u8::MAX)?)
+                }
+            }
+        };
+
+        if is_paren {
+            self.lexer
+                .expect(|x| matches!(x, TokenTypes::Operator(OperatorTypes::RParen)))?;
+        }
+
+        return Ok(ExprNode::Sizeof {
+            held: Box::new(size_of_data),
+        });
+    }
+
+    pub fn parse_unary(&mut self) -> Result<ExprNode, String> {
+        if let Some(TokenTypes::Keyword(KeywordTypes::Sizeof)) = self.lexer.peek() {
+            return self.parse_size_of();
+        }
+
+        if let Some(TokenTypes::Operator(operator_type)) = self.lexer.peek()
+            && (operator_type.potential_unary())
+        {
+            self.lexer.advance();
+            let operand = self.parse_unary();
+            return Ok(ExprNode::Unary {
+                operator: operator_type,
+                expr: Box::new(operand?),
+            });
+        }
+
+        return self.parse_primary();
+    }
+
+    pub fn parse_accessor_operator(&mut self) -> Result<ExprNode, String> {
+        let mut expr_nodes = Vec::new();
+
+        while let Some(TokenTypes::Operator(OperatorTypes::LSquareBracket)) = self.lexer.peek() {
+            self.lexer.advance();
+            expr_nodes.push(self.parse_expression(0)?);
+            self.lexer
+                .expect(|x| matches!(x, TokenTypes::Operator(OperatorTypes::RSquareBracket)))?;
+        }
+
+        let mut final_accessor = ExprNode::Empty;
+
+        // we reverse it because when building the tree
+        // we have to start at the most inner most nested part
+        for node in expr_nodes.iter().rev() {
+            final_accessor = ExprNode::Accessor {
+                expr: Box::new(node.clone()),
+                nested_accessor: Box::new(final_accessor.clone()),
+            };
+        }
+
+        Ok(final_accessor)
+    }
+
+    pub fn parse_func_call_args(&mut self) -> Result<ExprNode, String> {
+        let mut args = Vec::new();
+
+        self.lexer.advance(); // move past the left parenthesis
+
+        while let Some(token) = self.lexer.peek()
+            && !matches!(token, TokenTypes::Operator(OperatorTypes::RParen))
+        {
+            if matches!(token, TokenTypes::Operator(OperatorTypes::Comma)) {
+                return Err(format!("Unexpected comma in function call"));
+            }
+
+            // since we don't want to collect commas we start as a higher precedence level
+            // commas have a precedence of 2 so we start at 3 instead
+            args.push(self.parse_expression(3)?);
+
+            verify_next_in_comma_list(
+                &mut self.lexer,
+                TokenTypes::Operator(OperatorTypes::RParen),
+                "abc",
+            )?;
+
+            if matches!(
+                self.lexer.peek(),
+                Some(TokenTypes::Operator(OperatorTypes::Comma))
+            ) {
+                self.lexer.advance();
             }
         }
+        self.lexer.advance();
+
+        Ok(ExprNode::FunctionCall {
+            args,
+            nested_call: Box::new(ExprNode::Empty),
+        })
     }
 
-    if lexer.peek().is_none() {
-        return Err(String::from(
-            "Expected another token in expression, got nothing",
-        ));
+    fn parse_func_calls(&mut self) -> Result<ExprNode, String> {
+        let mut func_calls = Vec::new();
+
+        while let Some(TokenTypes::Operator(OperatorTypes::LParen)) = self.lexer.peek() {
+            func_calls.push(self.parse_func_call_args()?);
+        }
+
+        // similar logic to what was done in the accessors
+        let mut final_func_call = ExprNode::Empty;
+
+        for func_call in func_calls.iter().rev() {
+            let args = match func_call {
+                ExprNode::FunctionCall { args, .. } => args.clone(),
+                _ => unreachable!(),
+            };
+
+            final_func_call = ExprNode::FunctionCall {
+                args,
+                nested_call: Box::new(final_func_call.clone()),
+            };
+        }
+
+        Ok(final_func_call)
     }
 
-    Err(String::from(
-        "Next token in expression must be a literal, operator or identifier",
-    ))
+    fn parse_member_access(&mut self) -> Result<ExprNode, String> {
+        let mut all_members = Vec::new();
+
+        while let Some(TokenTypes::Operator(op_type)) = self.lexer.peek() {
+            self.lexer.advance();
+            let member = self.lexer.expect_extract(|x| match x {
+                TokenTypes::Identifier(member) => Some(member),
+                _ => None,
+            })?;
+
+            all_members.push(ExprNode::MemberAccess {
+                member,
+                operator: op_type,
+                next_member: Box::new(ExprNode::Empty),
+            });
+        }
+
+        // similar logic to what was done in the accessors
+        let mut final_member = ExprNode::Empty;
+
+        for member in all_members.iter().rev() {
+            let (member_name, operator) = match member {
+                ExprNode::MemberAccess {
+                    member, operator, ..
+                } => (member.clone(), operator),
+                _ => unreachable!(),
+            };
+
+            final_member = ExprNode::MemberAccess {
+                member: member_name,
+                operator: *operator,
+                next_member: Box::new(final_member.clone()),
+            };
+        }
+
+        Ok(final_member)
+    }
+
+    fn parse_postfix(&mut self) -> Result<ExprNode, String> {
+        let mut node = ExprNode::Empty;
+
+        if let Some(TokenTypes::Identifier(identifier)) = self.lexer.peek() {
+            node = ExprNode::Identifier { identifier };
+            self.lexer.advance();
+        }
+
+        while let Some(TokenTypes::Operator(operator_type)) = self.lexer.peek() {
+            match operator_type {
+                OperatorTypes::Inc => {
+                    node = ExprNode::PostFix {
+                        left: Box::new(node),
+                        right: Box::new(ExprNode::PostInc),
+                    };
+                    self.lexer.advance();
+                }
+                OperatorTypes::Dec => {
+                    node = ExprNode::PostFix {
+                        left: Box::new(node),
+                        right: Box::new(ExprNode::PostDec),
+                    };
+                    self.lexer.advance();
+                }
+
+                OperatorTypes::LSquareBracket => {
+                    node = ExprNode::PostFix {
+                        left: Box::new(node),
+                        right: Box::new(self.parse_accessor_operator()?),
+                    };
+                }
+
+                OperatorTypes::DotOperator | OperatorTypes::ArrowOperator => {
+                    let accessor_node = self.parse_member_access()?;
+
+                    node = ExprNode::PostFix {
+                        left: Box::new(node),
+                        right: Box::new(accessor_node),
+                    };
+                }
+
+                OperatorTypes::LParen => {
+                    node = ExprNode::PostFix {
+                        left: Box::new(node),
+                        right: Box::new(self.parse_func_calls()?),
+                    };
+                }
+
+                _ => break,
+            }
+        }
+
+        return Ok(node);
+    }
+
+    fn get_precedence(token: &TokenTypes) -> Option<u8> {
+        let precedence = match token {
+            TokenTypes::Operator(op) => match op {
+                OperatorTypes::Comma => 2,
+                OperatorTypes::Colon | OperatorTypes::QuestionMark => 3,
+                OperatorTypes::Or => 4,
+                OperatorTypes::And => 5,
+                OperatorTypes::BitOr => 6,
+                OperatorTypes::BitXOR => 7,
+                OperatorTypes::Amperstand => 8, // BitAnd
+                OperatorTypes::Equal | OperatorTypes::NotEqual => 9,
+                OperatorTypes::Greater
+                | OperatorTypes::GreaterOrEq
+                | OperatorTypes::Less
+                | OperatorTypes::LessOrEq => 10,
+                OperatorTypes::BitLShift | OperatorTypes::BitRShift => 11,
+                OperatorTypes::Plus | OperatorTypes::Minus => 12,
+                OperatorTypes::Star | OperatorTypes::Divide | OperatorTypes::Modulus => 13,
+                _ => 0,
+            },
+
+            TokenTypes::Assignment(_) => 1,
+
+            _ => 0,
+        };
+
+        if precedence == 0 {
+            return None;
+        }
+
+        Some(precedence)
+    }
+
+    pub fn parse_expression(&mut self, min_precedence: u8) -> Result<ExprNode, String> {
+        let mut left = self.parse_primary()?;
+
+        while let Some(token) = self.lexer.peek() {
+            let Some(precedence) = Self::get_precedence(&token) else {
+                break;
+            };
+
+            if precedence < min_precedence {
+                break;
+            }
+
+            self.lexer.advance();
+
+            let next_min_precedence = precedence + 1;
+
+            if matches!(token, TokenTypes::Operator(OperatorTypes::QuestionMark)) {
+                let middle = self.parse_expression(next_min_precedence)?;
+                self.lexer
+                    .expect(|x| matches!(x, TokenTypes::Operator(OperatorTypes::Colon)))?;
+                let end = self.parse_expression(0)?;
+
+                left = ExprNode::Ternary {
+                    if_expr: Box::new(left),
+                    then_expr: Box::new(middle),
+                    else_expr: Box::new(end),
+                };
+
+                continue;
+            }
+
+            let right = self.parse_expression(next_min_precedence)?;
+            left = ExprNode::Binary {
+                left: Box::new(left),
+                operator: token,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(left)
+    }
+
+    fn parse_primary(&mut self) -> Result<ExprNode, String> {
+        if let Some(token_type) = self.lexer.peek() {
+            match token_type {
+                TokenTypes::Literal(literal_type) => match literal_type {
+                    LiteralTypes::Integer(x) => {
+                        self.lexer.advance();
+                        return Ok(ExprNode::Integer { num: x });
+                    }
+                    LiteralTypes::Character(x) => {
+                        self.lexer.advance();
+                        return Ok(ExprNode::Char { character: (x) });
+                    }
+
+                    LiteralTypes::Float(x) => {
+                        self.lexer.advance();
+                        return Ok(ExprNode::Float { num: x });
+                    }
+
+                    LiteralTypes::String(x) => {
+                        self.lexer.advance();
+                        return Ok(ExprNode::StrType { string: x });
+                    }
+                },
+
+                TokenTypes::Operator(OperatorTypes::LParen) => {
+                    let Some(future_token) = self.lexer.forward_peek() else {
+                        return Err(format!("Expected next token in expression, got nothing"));
+                    };
+
+                    let node;
+                    if matches!(future_token, TokenTypes::DataType(_))
+                        | matches!(future_token, TokenTypes::Keyword(KeywordTypes::Struct))
+                    {
+                        node = self.parse_cast()?;
+                    } else {
+                        self.lexer.advance();
+                        node = self.parse_expression(0)?;
+                        self.lexer
+                            .expect(|x| matches!(x, TokenTypes::Operator(OperatorTypes::RParen)))?;
+                    }
+
+                    return Ok(node);
+                }
+
+                TokenTypes::Identifier(_) => return self.parse_postfix(),
+                TokenTypes::Operator(op) if op.potential_unary() => return self.parse_unary(),
+
+                TokenTypes::Keyword(KeywordTypes::Sizeof) => return self.parse_unary(),
+
+                TokenTypes::LCurlyBrace => {
+                    return Ok(ExprNode::Aggregate {
+                        aggregate: Box::new(self.parse_aggregate_init()?),
+                    });
+                }
+
+                _ => {
+                    return Err(format!(
+                        "Expected primary token in expression parser, got token of type {token_type}"
+                    ));
+                }
+            }
+        }
+
+        if self.lexer.peek().is_none() {
+            return Err(String::from(
+                "Expected another token in expression, got nothing",
+            ));
+        }
+
+        Err(String::from(
+            "Next token in expression must be a literal, operator or identifier",
+        ))
+    }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::expression_parser::{ExprNode, parse_expression};
-    use crate::parser::helper::run_tests;
+    use crate::parser::{expression_parser::ExprNode, helper::run_tests};
 
-    fn parse_expression_generic(lexer: &mut Lexer) -> Result<ExprNode, String> {
-        parse_expression(lexer, 0)
+    fn parse_expression_generic(parser: &mut Parser) -> Result<ExprNode, String> {
+        Parser::parse_expression(parser, 0)
     }
 
     #[test]

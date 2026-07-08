@@ -1,6 +1,6 @@
 use std::{fs::File, io::Read};
 
-use crate::{lexer::lexer::Lexer, parser::parser::parse_program};
+use crate::{lexer::lexer::Lexer, parser::parser::Parser};
 
 mod lexer;
 mod parser;
@@ -13,15 +13,19 @@ fn main() {
     let mut program = String::new();
     file.read_to_string(&mut program).unwrap();
 
-    let mut lexer = Lexer::new(&program).unwrap();
+    let lexer = Lexer::new(&program).unwrap();
 
-    let parser = parse_program(&mut lexer);
-    if let Err(err_msg) = parser {
-        write_error_message(&program, FILE_PATH, &err_msg, &lexer);
+    let mut parser = Parser::new(&lexer);
+    let parsed_program = parser.parse_program();
+
+    // println!("{:?}", parser.semantics);
+
+    if let Err(err_msg) = parsed_program {
+        write_error_message(&program, FILE_PATH, &err_msg, &parser.lexer);
         return;
     }
 
-    println!("{}", parser.unwrap());
+    println!("{}", parsed_program.unwrap());
 }
 
 fn write_error_message(file: &str, file_name: &str, error_msg: &str, lexer: &Lexer) {

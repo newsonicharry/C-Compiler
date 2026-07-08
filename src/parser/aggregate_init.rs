@@ -2,15 +2,13 @@ use crate::lexer::escape_sequences::CharType;
 use crate::lexer::language_features::AssignmentTypes;
 use crate::lexer::language_features::LiteralTypes;
 use crate::lexer::language_features::OperatorTypes;
-use crate::lexer::lexer::{Lexer, TokenTypes};
+use crate::lexer::lexer::TokenTypes;
 use crate::parser::expression_parser::ExprNode;
-use crate::parser::expression_parser::parse_accessor_operator;
 use crate::parser::helper::pretty_clean_string;
-use crate::parser::parser::InitalizerNode;
-use crate::parser::parser::{STOP_AT_COMMA, parse_initalizer};
+use crate::parser::parser::Parser;
 use std::fmt::Display;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AggregateInit {
     Aggregate {
         held_values: Vec<AggregateInit>,
@@ -19,14 +17,14 @@ pub enum AggregateInit {
         // it can be an expression, it just has to be known at compile time
         // so enum constants or simple expressions (1+2)
         index: ExprNode,
-        value: Box<InitalizerNode>,
+        value: ExprNode,
     },
     InitElement {
-        value: Box<InitalizerNode>,
+        value: ExprNode,
     },
     MemberAccess {
         members: Vec<String>,
-        value: Box<InitalizerNode>,
+        value: ExprNode,
     },
 }
 
@@ -88,205 +86,209 @@ impl AggregateInit {
     }
 }
 
-pub fn parse_aggregate_init(lexer: &mut Lexer) -> Result<AggregateInit, String> {
-    if matches!(lexer.peek(), Some(TokenTypes::LCurlyBrace)) {
-        lexer.advance();
+impl Parser {
+    pub fn parse_aggregate_init(&mut self) -> Result<AggregateInit, String> {
+        if matches!(self.lexer.peek(), Some(TokenTypes::LCurlyBrace)) {
+            self.lexer.advance();
+        }
+
+        self.lexer
+            .force_peek("Expected next token in aggregate initalization, got nothing")?;
+
+        let mut all_init_elements = Vec::new();
+
+        while let Some(token) = self.lexer.peek()
+            && !matches!(token, TokenTypes::RCurlyBrace)
+        {
+            match token {
+                TokenTypes::Operator(OperatorTypes::LSquareBracket) => {
+                    all_init_elements.push(self.parse_designator_element()?);
+                }
+                TokenTypes::Operator(OperatorTypes::DotOperator) => {
+                    all_init_elements.push(self.parse_aggregate_member()?);
+                }
+                TokenTypes::LCurlyBrace => {
+                    all_init_elements.push(self.parse_nested_aggregate()?);
+                }
+                TokenTypes::RCurlyBrace => {
+                    all_init_elements.push(AggregateInit::Aggregate {
+                        held_values: vec![],
+                    });
+                }
+                TokenTypes::Literal(LiteralTypes::String(_)) => {
+                    all_init_elements.push(self.parse_string_initalization()?);
+                }
+
+                TokenTypes::Literal(_) => {
+                    all_init_elements.push(self.parse_init_element()?);
+                }
+
+                _ => {
+                    return Err(String::from(format!(
+                        "Unexpected token of type {token} in aggregate initalization"
+                    )));
+                }
+            };
+        }
+
+        self.lexer.advance(); // move past the "}"
+
+        Ok(AggregateInit::Aggregate {
+            held_values: all_init_elements,
+        })
     }
 
-    lexer.force_peek("Expected next token in aggregate initalization, got nothing")?;
-
-    let mut all_init_elements = Vec::new();
-
-    while let Some(token) = lexer.peek()
-        && !matches!(token, TokenTypes::RCurlyBrace)
-    {
-        match token {
-            TokenTypes::Operator(OperatorTypes::LSquareBracket) => {
-                all_init_elements.push(parse_designator_element(lexer)?);
-            }
-            TokenTypes::Operator(OperatorTypes::DotOperator) => {
-                all_init_elements.push(parse_aggregate_member(lexer)?);
-            }
-            TokenTypes::LCurlyBrace => {
-                all_init_elements.push(parse_nested_aggregate(lexer)?);
-            }
-            TokenTypes::RCurlyBrace => {
-                all_init_elements.push(AggregateInit::Aggregate {
-                    held_values: vec![],
-                });
-            }
-            TokenTypes::Literal(LiteralTypes::String(_)) => {
-                all_init_elements.push(parse_string_initalization(lexer)?);
-            }
-
-            TokenTypes::Literal(_) => {
-                all_init_elements.push(parse_init_element(lexer)?);
-            }
-
-            _ => {
-                return Err(String::from(format!(
-                    "Unexpected token of type {token} in aggregate initalization"
-                )));
-            }
-        };
-    }
-
-    lexer.advance(); // move past the "}"
-
-    Ok(AggregateInit::Aggregate {
-        held_values: all_init_elements,
-    })
-}
-
-fn parse_string_initalization(lexer: &mut Lexer) -> Result<AggregateInit, String> {
-    let string_literal = lexer.expect_extract(|x| match x {
-        TokenTypes::Literal(LiteralTypes::String(str)) => Some(str),
-        _ => None,
-    })?;
-
-    let mut all_elements = Vec::new();
-
-    for char_type in string_literal.0.iter() {
-        let initalizer = InitalizerNode {
-            aggregate: None,
-            expr: Some(ExprNode::Char {
-                character: char_type.clone(),
-            }),
-        };
-        let init_element = AggregateInit::InitElement {
-            value: Box::new(initalizer),
-        };
-        all_elements.push(init_element);
-    }
-
-    let null_initalizer = InitalizerNode {
-        aggregate: None,
-        expr: Some(ExprNode::Char {
-            character: CharType::Octal { value: 0 }, // null terminator
-        }),
-    };
-
-    let null_init_element = AggregateInit::InitElement {
-        value: Box::new(null_initalizer),
-    };
-    all_elements.push(null_init_element);
-
-    let next_token =
-        lexer.force_peek("Unexpected end to string parsing in aggregate initalization")?;
-    if matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma)) {
-        lexer.advance();
-    }
-
-    Ok(AggregateInit::Aggregate {
-        held_values: all_elements,
-    })
-}
-
-fn parse_aggregate_member(lexer: &mut Lexer) -> Result<AggregateInit, String> {
-    let mut members = Vec::new();
-    let init_value;
-
-    loop {
-        lexer.expect(|x| matches!(x, TokenTypes::Operator(OperatorTypes::DotOperator)))?;
-        let member_name = lexer.expect_extract(|x| match x {
-            TokenTypes::Identifier(x) => Some(x),
+    fn parse_string_initalization(&mut self) -> Result<AggregateInit, String> {
+        let string_literal = self.lexer.expect_extract(|x| match x {
+            TokenTypes::Literal(LiteralTypes::String(str)) => Some(str),
             _ => None,
         })?;
 
-        members.push(member_name);
+        let mut all_elements = Vec::new();
 
-        let next_token = lexer.force_peek("Expected member accessor or assignment, got nothing")?;
-
-        if let TokenTypes::Assignment(AssignmentTypes::SimpleAssignment) = next_token {
-            lexer.advance();
-
-            init_value = parse_initalizer::<STOP_AT_COMMA>(lexer)?;
-            break;
+        for char_type in string_literal.0.iter() {
+            let initalizer = ExprNode::Char {
+                character: char_type.clone(),
+            };
+            let init_element = AggregateInit::InitElement { value: initalizer };
+            all_elements.push(init_element);
         }
+
+        let null_initalizer = ExprNode::Char {
+            character: CharType::Octal { value: 0 }, // null terminator
+        };
+
+        let null_init_element = AggregateInit::InitElement {
+            value: null_initalizer,
+        };
+        all_elements.push(null_init_element);
+
+        let next_token = self
+            .lexer
+            .force_peek("Unexpected end to string parsing in aggregate initalization")?;
+        if matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma)) {
+            self.lexer.advance();
+        }
+
+        Ok(AggregateInit::Aggregate {
+            held_values: all_elements,
+        })
     }
 
-    let next_token = lexer.force_peek("Unexpected end to aggregate member initalization")?;
-    if !matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma))
-        && !matches!(next_token, TokenTypes::RCurlyBrace)
-    {
-        return Err(format!(
-            "Unexpected next token of type {next_token}, expected comma or right curly brace"
-        ));
+    fn parse_aggregate_member(&mut self) -> Result<AggregateInit, String> {
+        let mut members = Vec::new();
+        let init_value;
+
+        loop {
+            self.lexer
+                .expect(|x| matches!(x, TokenTypes::Operator(OperatorTypes::DotOperator)))?;
+            let member_name = self.lexer.expect_extract(|x| match x {
+                TokenTypes::Identifier(x) => Some(x),
+                _ => None,
+            })?;
+
+            members.push(member_name);
+
+            let next_token = self
+                .lexer
+                .force_peek("Expected member accessor or assignment, got nothing")?;
+
+            if let TokenTypes::Assignment(AssignmentTypes::SimpleAssignment) = next_token {
+                self.lexer.advance();
+
+                init_value = self.parse_expression(3)?;
+                break;
+            }
+        }
+
+        let next_token = self
+            .lexer
+            .force_peek("Unexpected end to aggregate member initalization")?;
+        if !matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma))
+            && !matches!(next_token, TokenTypes::RCurlyBrace)
+        {
+            return Err(format!(
+                "Unexpected next token of type {next_token}, expected comma or right curly brace"
+            ));
+        }
+
+        if matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma)) {
+            self.lexer.advance();
+        }
+
+        Ok(AggregateInit::MemberAccess {
+            members,
+            value: init_value,
+        })
     }
 
-    if matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma)) {
-        lexer.advance();
+    fn parse_nested_aggregate(&mut self) -> Result<AggregateInit, String> {
+        let nested_aggregate = self.parse_aggregate_init()?;
+
+        let next_token = self
+            .lexer
+            .force_peek("Unexpected end to aggregate member initalization")?;
+
+        if matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma)) {
+            self.lexer.advance();
+        }
+
+        Ok(nested_aggregate)
     }
 
-    Ok(AggregateInit::MemberAccess {
-        members,
-        value: Box::new(init_value),
-    })
+    fn parse_designator_element(&mut self) -> Result<AggregateInit, String> {
+        let index_expr = self.parse_accessor_operator()?;
+
+        self.lexer
+            .expect(|x| matches!(x, TokenTypes::Assignment(AssignmentTypes::SimpleAssignment)))?;
+
+        let initalizer = self.parse_expression(3)?;
+
+        let designator = AggregateInit::Designator {
+            index: index_expr,
+            value: initalizer,
+        };
+
+        let next_token = self
+            .lexer
+            .force_peek("Expected end of aggregate designator, got nothing")?;
+
+        if matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma)) {
+            self.lexer.advance();
+        }
+
+        Ok(designator)
+    }
+
+    fn parse_init_element(&mut self) -> Result<AggregateInit, String> {
+        let initalizer = self.parse_expression(3)?;
+        let aggregate_element = AggregateInit::InitElement { value: initalizer };
+
+        let next_token = self
+            .lexer
+            .force_peek("Expected next token in aggregate initalization")?;
+
+        if !matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma))
+            && !matches!(next_token, TokenTypes::RCurlyBrace)
+        {
+            return Err(format!(
+                "Unexpected next token of type {next_token}, expected comma or right curly brace"
+            ));
+        }
+
+        if matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma)) {
+            self.lexer.advance();
+        }
+
+        Ok(aggregate_element)
+    }
 }
-
-fn parse_nested_aggregate(lexer: &mut Lexer) -> Result<AggregateInit, String> {
-    let nested_aggregate = parse_aggregate_init(lexer)?;
-
-    let next_token = lexer.force_peek("Unexpected end to aggregate member initalization")?;
-
-    if matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma)) {
-        lexer.advance();
-    }
-
-    Ok(nested_aggregate)
-}
-
-fn parse_designator_element(lexer: &mut Lexer) -> Result<AggregateInit, String> {
-    let index_expr = parse_accessor_operator(lexer)?;
-
-    lexer.expect(|x| matches!(x, TokenTypes::Assignment(AssignmentTypes::SimpleAssignment)))?;
-
-    let initalizer = parse_initalizer::<STOP_AT_COMMA>(lexer)?;
-
-    let designator = AggregateInit::Designator {
-        index: index_expr,
-        value: Box::new(initalizer),
-    };
-
-    let next_token = lexer.force_peek("Expected end of aggregate designator, got nothing")?;
-
-    if matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma)) {
-        lexer.advance();
-    }
-
-    Ok(designator)
-}
-
-fn parse_init_element(lexer: &mut Lexer) -> Result<AggregateInit, String> {
-    let initalizer = parse_initalizer::<STOP_AT_COMMA>(lexer)?;
-    let aggregate_element = AggregateInit::InitElement {
-        value: Box::new(initalizer),
-    };
-
-    let next_token = lexer.force_peek("Expected next token in aggregate initalization")?;
-
-    if !matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma))
-        && !matches!(next_token, TokenTypes::RCurlyBrace)
-    {
-        return Err(format!(
-            "Unexpected next token of type {next_token}, expected comma or right curly brace"
-        ));
-    }
-
-    if matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma)) {
-        lexer.advance();
-    }
-
-    Ok(aggregate_element)
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::parser::aggregate_init::parse_aggregate_init;
-    use crate::parser::helper::run_tests;
+    use crate::parser::{helper::run_tests, parser::Parser};
 
     #[test]
-    fn test_aggregate_init_simple() {
+    fn aggregate_init_simple() {
         let test_cases = vec![
             ("{1}", "(AggInit (InitElement (Expr (Num 1))))"),
             (
@@ -323,11 +325,11 @@ mod tests {
             ),
         ];
 
-        run_tests(parse_aggregate_init, test_cases);
+        run_tests(Parser::parse_aggregate_init, test_cases);
     }
 
     #[test]
-    fn test_aggregate_init_multi_dimensional() {
+    fn aggregate_init_multi_dimensional() {
         let test_cases = vec![
             (
                 "{{1, 2, 3}, {4, 5, 6}}",
@@ -437,11 +439,11 @@ mod tests {
             ),
         ];
 
-        run_tests(parse_aggregate_init, test_cases);
+        run_tests(Parser::parse_aggregate_init, test_cases);
     }
 
     #[test]
-    fn test_aggregate_init_designators() {
+    fn aggregate_init_designators() {
         let test_cases = vec![
             (
                 "{[1] = 5}",
@@ -533,11 +535,11 @@ mod tests {
             ),
         ];
 
-        run_tests(parse_aggregate_init, test_cases);
+        run_tests(Parser::parse_aggregate_init, test_cases);
     }
 
     #[test]
-    fn test_aggregate_init_members() {
+    fn aggregate_init_members() {
         let test_cases = vec![
             (
                 "{.x = 20, .y = 10}",
@@ -591,11 +593,11 @@ mod tests {
             ),
         ];
 
-        run_tests(parse_aggregate_init, test_cases);
+        run_tests(Parser::parse_aggregate_init, test_cases);
     }
 
     #[test]
-    fn test_aggregate_init_strings() {
+    fn aggregate_init_strings() {
         let test_cases = vec![
             (
                 "{\"hello\"}",
@@ -667,11 +669,11 @@ mod tests {
             ),
         ];
 
-        run_tests(parse_aggregate_init, test_cases);
+        run_tests(Parser::parse_aggregate_init, test_cases);
     }
 
     #[test]
-    fn test_aggregate_trailing_commas() {
+    fn aggregate_trailing_commas() {
         let test_cases = vec![
             (
                 "{1, 2, 3,}",
@@ -770,6 +772,6 @@ mod tests {
             ),
         ];
 
-        run_tests(parse_aggregate_init, test_cases);
+        run_tests(Parser::parse_aggregate_init, test_cases);
     }
 }

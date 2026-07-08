@@ -306,7 +306,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_invalid_escape_sequences() {
+    fn escape_sequences_invalid() {
         let test_cases = vec![r#"\x"#, r#"\u123"#, r#"\8"#];
 
         for test_case in test_cases {
@@ -317,7 +317,7 @@ mod tests {
     }
 
     #[test]
-    fn test_valid_escape_sequences() {
+    fn escape_sequences_valid() {
         let test_cases = vec![
             (r#""#, vec![]),
             (r#"A"#, vec![CharType::Char { value: 0x41 }]),

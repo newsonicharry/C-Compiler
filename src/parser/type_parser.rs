@@ -1,14 +1,15 @@
 use crate::lexer::language_features::{DataTypes, KeywordTypes, OperatorTypes};
-use crate::lexer::lexer::{Lexer, TokenTypes};
-use crate::parser::expression_parser::{ExprNode, parse_expression};
+use crate::lexer::lexer::TokenTypes;
+use crate::parser::expression_parser::ExprNode;
 use crate::parser::helper::verify_next_in_comma_list;
+use crate::parser::parser::Parser;
+use crate::semantics::semantics::IdentifierType;
 use std::fmt::Display;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SimpleType {
     pub base_type: DataTypes,
-    pub modifiers: Vec<DataTypes>,
-    pub qualifiers: Vec<DataTypes>,
+    pub properties: Vec<DataTypes>,
 }
 
 impl Display for SimpleType {
@@ -20,8 +21,7 @@ impl Display for SimpleType {
                 output.push_str(&format!("{data_type} "));
             }
         };
-        push_data_types(&self.modifiers);
-        push_data_types(&self.qualifiers);
+        push_data_types(&self.properties);
 
         output.push_str(&self.base_type.to_string());
 
@@ -29,7 +29,7 @@ impl Display for SimpleType {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TypeNode {
     Empty,
 
@@ -155,6 +155,70 @@ impl TypeNode {
             Self::Struct { .. } | Self::Enum { .. } | Self::Union { .. } => {
                 panic!("Tag type type is a unique type with no internal values")
             }
+        }
+    }
+
+    /// refers to a member of a tag type in which its member has a specifier thats not allowed
+    /// only qualifiers and base types are allowed, storage class specifiers are not
+    pub fn has_invalid_tag_type_specifier(&self) -> bool {
+        let mut cloned_value = self.clone();
+        let nested_value = cloned_value.get_most_nested_layer();
+
+        let Self::Normal { held_type, .. } = nested_value.get_most_nested_layer() else {
+            return false;
+        };
+
+        if held_type
+            .properties
+            .iter()
+            .any(|x| x.is_storage_specifier() || x.is_function_specifier())
+        {
+            return true;
+        }
+
+        false
+    }
+
+    pub fn is_typedef(&self) -> bool {
+        let mut nested_value = match self {
+            Self::Variable { held_value, .. } => held_value.clone(),
+            Self::Function { return_type, .. } => return_type.clone(),
+            _ => return false,
+        };
+
+        let Self::Normal {
+            held_type: type_properties,
+            ..
+        } = nested_value.get_most_nested_layer()
+        else {
+            return false;
+        };
+
+        if type_properties.properties.contains(&DataTypes::Typedef) {
+            return true;
+        }
+
+        false
+    }
+
+    pub fn remove_typedef_property(&mut self) {
+        // at this point its a normal because we've already stripped out the outer part (which is either a variable or a function)
+        let final_layer = self.get_most_nested_layer();
+
+        let Self::Normal {
+            held_type: type_properties,
+            ..
+        } = final_layer
+        else {
+            return;
+        };
+
+        if let Some(position) = type_properties
+            .properties
+            .iter()
+            .position(|x| *x == DataTypes::Typedef)
+        {
+            type_properties.properties.remove(position);
         }
     }
 
@@ -307,285 +371,333 @@ impl Display for TypeNode {
     }
 }
 
-pub fn parse_type(lexer: &mut Lexer) -> Result<TypeNode, String> {
-    // temporary of the inner most type
-    let mut final_type = TypeNode::Empty;
+impl Parser {
+    pub fn parse_type(&mut self) -> Result<TypeNode, String> {
+        // temporary of the inner most type
+        let mut final_type = TypeNode::Empty;
 
-    // we hold the modifier, qualifier and type of the left most part of the type
-    // for most types this is all there will be but for anything more complex (such as a pointer or anytype of nesting)
-    // we will use this as just the outer most part of the type
-    let mut original_type = None;
+        // we hold the modifier, qualifier and type of the left most part of the type
+        // for most types this is all there will be but for anything more complex (such as a pointer or anytype of nesting)
+        // we will use this as just the outer most part of the type
+        let mut original_type = None;
 
-    // if it is a pointer we hold its qualifiers
-    let mut all_pointer_data: Vec<Vec<DataTypes>> = Vec::new();
-    let mut pointer_function_parameters = Vec::new();
+        // if it is a pointer we hold its qualifiers
+        let mut all_pointer_data: Vec<Vec<DataTypes>> = Vec::new();
+        let mut pointer_function_parameters = Vec::new();
 
-    // if theres an array element(s) we hold that as well
-    let mut array_expressions = Vec::new();
+        // if theres an array element(s) we hold that as well
+        let mut array_expressions = Vec::new();
 
-    while let Some(token) = lexer.peek() {
-        match token {
-            TokenTypes::Identifier(identifier) => {
-                // this is true if its a function's return type
-                // if thats the case then we dont want to pick up its name and we break
-                if let Some(TokenTypes::Operator(OperatorTypes::LParen)) = lexer.forward_peek() {
-                    lexer.advance(); // moves past the identifier
-                    lexer.advance(); // moves past the left parenthesis
+        while let Some(token) = self.lexer.peek() {
+            match token {
+                TokenTypes::Identifier(identifier) => {
+                    // this is true if its a function's return type
+                    // if thats the case then we dont want to pick up its name and we break
+                    if let Some(TokenTypes::Operator(OperatorTypes::LParen)) =
+                        self.lexer.forward_peek()
+                    {
+                        self.lexer.advance(); // moves past the identifier
+                        self.lexer.advance(); // moves past the left parenthesis
 
-                    let params = parse_parameter_list(lexer)?;
+                        let params = self.parse_parameter_list()?;
 
-                    final_type = TypeNode::Function {
+                        final_type = TypeNode::Function {
+                            name: identifier,
+                            return_type: Box::new(TypeNode::Empty),
+                            parameters: params,
+                        };
+
+                        break;
+                    }
+
+                    // if the identifier is a typedef we want to use it as if it is a normal type
+                    if let Some(identifier_type) = self.semantics.check_identifier(&identifier)
+                        && original_type.is_none()
+                    {
+                        if let IdentifierType::Typedef(type_node) = identifier_type {
+                            original_type = Some(type_node);
+                            self.lexer.advance();
+                            continue;
+                        };
+                    }
+
+                    if !Self::is_valid_var_name(&identifier) {
+                        return Err(String::from("Variable does not have a valid variable name"));
+                    }
+
+                    final_type = TypeNode::Variable {
                         name: identifier,
-                        return_type: Box::new(TypeNode::Empty),
-                        parameters: params,
+                        held_value: Box::new(TypeNode::Empty),
                     };
-
-                    break;
+                    self.lexer.advance();
                 }
 
-                if !is_valid_var_name(&identifier) {
-                    return Err(String::from("Variable does not have a valid variable name"));
+                TokenTypes::DataType(_)
+                | TokenTypes::Keyword(KeywordTypes::Struct)
+                | TokenTypes::Keyword(KeywordTypes::Enum)
+                | TokenTypes::Keyword(KeywordTypes::Union) => {
+                    if original_type.is_some() {
+                        return Err(String::from("Unexpected data type in type parser"));
+                    }
+                    original_type = Some(self.parse_normal_type()?);
                 }
 
-                final_type = TypeNode::Variable {
-                    name: identifier,
-                    held_value: Box::new(TypeNode::Empty),
-                };
-                lexer.advance();
-            }
-
-            TokenTypes::DataType(_)
-            | TokenTypes::Keyword(KeywordTypes::Struct)
-            | TokenTypes::Keyword(KeywordTypes::Enum)
-            | TokenTypes::Keyword(KeywordTypes::Union) => {
-                if original_type.is_some() {
-                    return Err(String::from("Unexpected data type in type parser"));
+                TokenTypes::Operator(OperatorTypes::Star) => {
+                    all_pointer_data.push(self.parse_pointer_qualifiers()?);
                 }
-                original_type = Some(parse_normal_type(lexer)?);
-            }
+                TokenTypes::Operator(OperatorTypes::LParen) => {
+                    self.lexer.advance();
 
-            TokenTypes::Operator(OperatorTypes::Star) => {
-                all_pointer_data.push(parse_pointer_qualifiers(lexer));
-            }
-            TokenTypes::Operator(OperatorTypes::LParen) => {
-                lexer.advance();
+                    if matches!(self.lexer.peek(), Some(TokenTypes::DataType(_))) {
+                        pointer_function_parameters = self.parse_parameter_list()?;
+                    } else {
+                        final_type = self.parse_type()?;
+                        self.lexer.advance();
+                    };
+                }
+                TokenTypes::Operator(OperatorTypes::LSquareBracket) => {
+                    self.lexer.advance();
+                    array_expressions.push(self.parse_expression(0)?);
+                    self.lexer.advance();
+                }
 
-                if matches!(lexer.peek(), Some(TokenTypes::DataType(_))) {
-                    pointer_function_parameters = parse_parameter_list(lexer)?;
-                } else {
-                    final_type = parse_type(lexer)?;
-                    lexer.advance();
-                };
+                _ => break,
             }
-            TokenTypes::Operator(OperatorTypes::LSquareBracket) => {
-                lexer.advance();
-                array_expressions.push(parse_expression(lexer, 0)?);
-                lexer.advance();
-            }
-
-            _ => break,
         }
+        // this is because multidimensional arrays exist and we start at the outside in
+        for array_expr in array_expressions.iter().rev() {
+            let internal_type = TypeNode::Array {
+                expr: array_expr.clone(),
+                held_value: Box::new(TypeNode::Empty),
+            };
+
+            final_type.set_most_nested_held_value(&internal_type);
+        }
+
+        if !pointer_function_parameters.is_empty() {
+            let most_nested_type = final_type.get_most_nested_layer();
+
+            let TypeNode::Pointer { qualifiers, .. } = most_nested_type.clone() else {
+                return Err(String::from(
+                    "Expected type to be pointer due to function parameters",
+                ));
+            };
+
+            *most_nested_type = TypeNode::Pointer {
+                qualifiers,
+                function_parameters: pointer_function_parameters.clone(),
+                held_value: Box::new(TypeNode::Empty),
+            };
+        }
+
+        for pointer_qualifiers in all_pointer_data.iter().rev() {
+            let internal_type = TypeNode::Pointer {
+                qualifiers: pointer_qualifiers.clone(),
+                function_parameters: Vec::new(),
+                held_value: Box::new(TypeNode::Empty),
+            };
+
+            final_type.set_most_nested_held_value(&internal_type);
+        }
+
+        if let Some(normal_type) = original_type {
+            final_type.set_most_nested_held_value(&normal_type);
+        }
+
+        Ok(final_type)
     }
-    // this is because multidimensional arrays exist and we start at the outside in
-    for array_expr in array_expressions.iter().rev() {
-        let internal_type = TypeNode::Array {
-            expr: array_expr.clone(),
-            held_value: Box::new(TypeNode::Empty),
+
+    pub fn parse_parameter_list(&mut self) -> Result<Vec<TypeNode>, String> {
+        let mut param_list = Vec::new();
+
+        while !matches!(
+            self.lexer.peek(),
+            Some(TokenTypes::Operator(OperatorTypes::RParen))
+        ) {
+            if matches!(
+                self.lexer.peek(),
+                Some(TokenTypes::Operator(OperatorTypes::Comma))
+            ) {
+                return Err(String::from("Unexpected comma in parameter list"));
+            }
+
+            param_list.push(self.parse_type()?);
+
+            verify_next_in_comma_list(
+                &mut self.lexer,
+                TokenTypes::Operator(OperatorTypes::RParen),
+                "Unexpected end to parameter list",
+            )?;
+
+            if matches!(
+                self.lexer.peek(),
+                Some(TokenTypes::Operator(OperatorTypes::Comma))
+            ) {
+                self.lexer.advance();
+            }
+        }
+        self.lexer.advance();
+        Ok(param_list)
+    }
+
+    fn parse_pointer_qualifiers(&mut self) -> Result<Vec<DataTypes>, String> {
+        self.lexer.advance(); // move past the *
+        let mut qualifiers: Vec<DataTypes> = Vec::new();
+
+        while let Some(TokenTypes::DataType(data_type)) = self.lexer.peek() {
+            if data_type.is_qualifier() {
+                qualifiers.push(data_type);
+            } else {
+                return Err(format!("Unexpected non pointer qualifer {data_type}"));
+            }
+            self.lexer.advance();
+        }
+
+        Ok(qualifiers)
+    }
+
+    fn parse_normal_tag_type(&mut self, qualifiers: &Vec<DataTypes>) -> Result<TypeNode, String> {
+        let Some(TokenTypes::Keyword(keyword_type)) = self.lexer.peek() else {
+            return Ok(TypeNode::Empty);
         };
 
-        final_type.set_most_nested_held_value(&internal_type);
+        self.lexer.advance();
+
+        let tag_type_name = self.lexer.expect_extract(|x| match x {
+            TokenTypes::Identifier(name) => Some(name),
+            _ => None,
+        })?;
+
+        match keyword_type {
+            KeywordTypes::Struct => {
+                return Ok(TypeNode::Struct {
+                    name: Some(tag_type_name),
+                    qualifiers: qualifiers.clone(),
+                });
+            }
+
+            KeywordTypes::Enum => {
+                return Ok(TypeNode::Enum {
+                    name: Some(tag_type_name),
+                    qualifiers: qualifiers.clone(),
+                });
+            }
+
+            KeywordTypes::Union => {
+                return Ok(TypeNode::Union {
+                    name: Some(tag_type_name),
+                    qualifiers: qualifiers.clone(),
+                });
+            }
+
+            _ => unreachable!(),
+        }
     }
 
-    if !pointer_function_parameters.is_empty() {
-        let most_nested_type = final_type.get_most_nested_layer();
+    fn parse_normal_type(&mut self) -> Result<TypeNode, String> {
+        let mut base_type = DataTypes::NoType;
+        let mut properties: Vec<DataTypes> = Vec::new();
 
-        let TypeNode::Pointer { qualifiers, .. } = most_nested_type.clone() else {
+        while let Some(TokenTypes::DataType(data_type)) = self.lexer.peek() {
+            if data_type.is_modifier()
+                || data_type.is_qualifier()
+                || data_type.is_storage_specifier()
+                || data_type.is_function_specifier()
+            {
+                properties.push(data_type);
+            } else {
+                if base_type != DataTypes::NoType {
+                    return Err(format!(
+                        "Unexpected data type of {data_type}, already found type {base_type}"
+                    ));
+                }
+
+                base_type = data_type;
+            }
+
+            self.lexer.advance();
+        }
+
+        // check for a typedef if the current type is not a completed type
+        // (aka it has no base type, such as an int or a float)
+        if let Some(TokenTypes::Identifier(identifier)) = self.lexer.peek()
+            && base_type == DataTypes::NoType
+        {
+            if let Some(IdentifierType::Typedef(typedef_type)) =
+                self.semantics.check_identifier(&identifier)
+            {
+                let TypeNode::Normal {
+                    held_type: mut typedef_simple_type,
+                    held_value: typedef_held_value,
+                } = typedef_type
+                else {
+                    return Err(String::from("Unexpected typedef type in new type"));
+                };
+
+                typedef_simple_type.properties.extend(properties.clone());
+
+                return Ok(TypeNode::Normal {
+                    held_type: typedef_simple_type,
+                    held_value: typedef_held_value,
+                });
+            }
+        }
+
+        // error if there are multiple typedefs
+        if properties
+            .iter()
+            .filter(|x| **x == DataTypes::Typedef)
+            .count()
+            > 1
+        {
             return Err(String::from(
-                "Expected type to be pointer due to function parameters",
+                "Expected only a single typedef, found multiple",
             ));
+        }
+
+        let tag_type = self.parse_normal_tag_type(&properties)?;
+        if !matches!(tag_type, TypeNode::Empty) {
+            return Ok(tag_type);
+        }
+
+        let is_modifier = properties.iter().any(|x| x.is_modifier());
+
+        // a long or a short modifier is still a long or a short without an implicit int base type
+        // (e.g., short x; is just as valid as short int x;)
+        if is_modifier && base_type == DataTypes::NoType {
+            base_type = DataTypes::Int;
+        }
+        // occurs when there is no base type (e.g., const x; is not a valid type)
+        else if !is_modifier && base_type == DataTypes::NoType {
+            return Err(String::from(
+                "Not given a valid base type, only a modifer or qualifier.",
+            ));
+        }
+
+        let final_type = SimpleType {
+            base_type,
+            properties,
         };
 
-        *most_nested_type = TypeNode::Pointer {
-            qualifiers,
-            function_parameters: pointer_function_parameters.clone(),
+        Ok(TypeNode::Normal {
+            held_type: final_type,
             held_value: Box::new(TypeNode::Empty),
-        };
+        })
     }
 
-    for pointer_qualifiers in all_pointer_data.iter().rev() {
-        let internal_type = TypeNode::Pointer {
-            qualifiers: pointer_qualifiers.clone(),
-            function_parameters: Vec::new(),
-            held_value: Box::new(TypeNode::Empty),
-        };
-
-        final_type.set_most_nested_held_value(&internal_type);
-    }
-
-    if let Some(normal_type) = original_type {
-        final_type.set_most_nested_held_value(&normal_type);
-    }
-
-    Ok(final_type)
-}
-
-pub fn parse_parameter_list(lexer: &mut Lexer) -> Result<Vec<TypeNode>, String> {
-    let mut param_list = Vec::new();
-
-    while !matches!(
-        lexer.peek(),
-        Some(TokenTypes::Operator(OperatorTypes::RParen))
-    ) {
-        if matches!(
-            lexer.peek(),
-            Some(TokenTypes::Operator(OperatorTypes::Comma))
-        ) {
-            return Err(String::from("Unexpected comma in parameter list"));
+    pub fn is_valid_var_name(name: &str) -> bool {
+        // we don't have to worry about whitespace as the lexer can't parse that
+        if name.is_empty() {
+            return false;
         }
 
-        param_list.push(parse_type(lexer)?);
-
-        verify_next_in_comma_list(
-            lexer,
-            TokenTypes::Operator(OperatorTypes::RParen),
-            "Unexpected end to parameter list",
-        )?;
-
-        if matches!(
-            lexer.peek(),
-            Some(TokenTypes::Operator(OperatorTypes::Comma))
-        ) {
-            lexer.advance();
-        }
-    }
-    lexer.advance();
-    Ok(param_list)
-}
-
-fn parse_pointer_qualifiers(lexer: &mut Lexer) -> Vec<DataTypes> {
-    lexer.advance(); // move past the *
-    let mut qualifiers: Vec<DataTypes> = Vec::new();
-
-    while let Some(TokenTypes::DataType(data_type)) = lexer.peek() {
-        if data_type.is_qualifier() {
-            qualifiers.push(data_type);
-        }
-        lexer.advance();
-    }
-
-    qualifiers
-}
-
-fn parse_normal_tag_type(
-    lexer: &mut Lexer,
-    qualifiers: &Vec<DataTypes>,
-) -> Result<TypeNode, String> {
-    let Some(TokenTypes::Keyword(keyword_type)) = lexer.peek() else {
-        return Ok(TypeNode::Empty);
-    };
-
-    lexer.advance();
-
-    let tag_type_name = lexer.expect_extract(|x| match x {
-        TokenTypes::Identifier(name) => Some(name),
-        _ => None,
-    })?;
-
-    match keyword_type {
-        KeywordTypes::Struct => {
-            return Ok(TypeNode::Struct {
-                name: Some(tag_type_name),
-                qualifiers: qualifiers.clone(),
-            });
+        if name.chars().nth(0).unwrap().is_ascii_digit() {
+            return false;
         }
 
-        KeywordTypes::Enum => {
-            return Ok(TypeNode::Enum {
-                name: Some(tag_type_name),
-                qualifiers: qualifiers.clone(),
-            });
-        }
-
-        KeywordTypes::Union => {
-            return Ok(TypeNode::Union {
-                name: Some(tag_type_name),
-                qualifiers: qualifiers.clone(),
-            });
-        }
-
-        _ => unreachable!(),
+        name.chars().all(|x| x.is_ascii_alphanumeric() || x == '_')
     }
 }
-
-fn parse_normal_type(lexer: &mut Lexer) -> Result<TypeNode, String> {
-    let mut base_type = DataTypes::NoType;
-    let mut modifiers: Vec<DataTypes> = Vec::new();
-    let mut qualifiers: Vec<DataTypes> = Vec::new();
-
-    while let Some(token) = lexer.peek()
-        && (matches!(token, TokenTypes::DataType(_)))
-    {
-        let TokenTypes::DataType(data_type) = token else {
-            unreachable!()
-        };
-
-        if data_type.is_modifier() {
-            modifiers.push(data_type);
-        } else if data_type.is_qualifier() {
-            qualifiers.push(data_type);
-        } else {
-            base_type = data_type;
-        }
-
-        lexer.advance();
-    }
-
-    let tag_type = parse_normal_tag_type(lexer, &qualifiers)?;
-    if !matches!(tag_type, TypeNode::Empty) {
-        return Ok(tag_type);
-    }
-
-    let is_long_or_short = modifiers
-        .iter()
-        .any(|x| *x == DataTypes::Long || *x == DataTypes::Short);
-
-    // a long or a short modifier is still a long or a short without an implicit int base type
-    // (e.g., short x; is just as valid as short int x;)
-    if is_long_or_short && base_type == DataTypes::NoType {
-        base_type = DataTypes::Int;
-    }
-    // occurs when there is no base type (e.g., const x; is not a valid type)
-    else if !is_long_or_short && base_type == DataTypes::NoType {
-        return Err(String::from(
-            "Not given a valid base type, only a modifer or qualifier.",
-        ));
-    }
-
-    let final_type = SimpleType {
-        base_type,
-        modifiers,
-        qualifiers,
-    };
-
-    Ok(TypeNode::Normal {
-        held_type: final_type,
-        held_value: Box::new(TypeNode::Empty),
-    })
-}
-
-pub fn is_valid_var_name(name: &str) -> bool {
-    // we don't have to worry about whitespace as the lexer can't parse that
-    if name.is_empty() {
-        return false;
-    }
-
-    if name.chars().nth(0).unwrap().is_ascii_digit() {
-        return false;
-    }
-
-    name.chars().all(|x| x.is_ascii_alphanumeric() || x == '_')
-}
-
 #[cfg(test)]
 mod tests {
     use crate::parser::helper::run_tests;
@@ -593,7 +705,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_modifier_qualifier() {
+    fn type_modifier_qualifier() {
         let test_cases = vec![
             (
                 "unsigned long long int a;",
@@ -610,11 +722,11 @@ mod tests {
             ("short d;", "(Name d (Type short int))"),
         ];
 
-        run_tests(parse_type, test_cases);
+        run_tests(Parser::parse_type, test_cases);
     }
 
     #[test]
-    fn test_pointer_and_array() {
+    fn type_pointer_and_array() {
         let test_cases = vec![
             ("int *ptr;", "(Name ptr (Ptr (Type int)))"),
             ("const int *c_ptr;", "(Name c_ptr (Ptr (Type const int)))"),
@@ -628,11 +740,11 @@ mod tests {
             ),
         ];
 
-        run_tests(parse_type, test_cases);
+        run_tests(Parser::parse_type, test_cases);
     }
 
     #[test]
-    fn test_function_pointers() {
+    fn type_function_pointers() {
         let test_cases = vec![
             (
                 "void (*callback)(void);",
@@ -648,11 +760,11 @@ mod tests {
             ),
         ];
 
-        run_tests(parse_type, test_cases);
+        run_tests(Parser::parse_type, test_cases);
     }
 
     #[test]
-    fn test_combination() {
+    fn type_combination() {
         let test_cases = vec![
             (
                 "const int *(* volatile multi_layer_ptr)[10];",
@@ -668,11 +780,11 @@ mod tests {
             ),
         ];
 
-        run_tests(parse_type, test_cases);
+        run_tests(Parser::parse_type, test_cases);
     }
 
     #[test]
-    fn test_struct_types() {
+    fn type_struct() {
         let test_cases = vec![
             ("struct Point *p;", "(Name p (Ptr (Struct Point)))"),
             ("struct Point **p;", "(Name p (Ptr (Ptr (Struct Point))))"),
@@ -702,6 +814,6 @@ mod tests {
             ),
         ];
 
-        run_tests(parse_type, test_cases);
+        run_tests(Parser::parse_type, test_cases);
     }
 }

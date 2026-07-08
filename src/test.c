@@ -1,7 +1,21 @@
+typedef struct {
+    int x;
+} StructAnon;
 
-int main(){
-  int x
-  int y = 1;
-  int z = y;
-  return 0;
-}
+StructAnon v23 = {1};
+
+typedef struct Point {
+    int x;
+    int y;
+} Point;
+
+Point v24 = {1,2};
+
+typedef struct Node Node;
+
+struct Node {
+    int value;
+    Node *next;
+};
+
+Node v25 = {10, 0};

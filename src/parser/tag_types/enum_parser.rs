@@ -1,18 +1,14 @@
 use crate::lexer::language_features::AssignmentTypes;
 use crate::lexer::language_features::KeywordTypes;
 use crate::lexer::language_features::OperatorTypes;
-use crate::lexer::lexer::{Lexer, TokenTypes};
+use crate::lexer::lexer::TokenTypes;
 use crate::parser::expression_parser::ExprNode;
-use crate::parser::expression_parser::parse_expression;
 use crate::parser::helper::pretty_clean_string;
-use crate::parser::parser::GlobalNode;
+use crate::parser::nodes::GlobalNode;
+use crate::parser::parser::Parser;
 use crate::parser::tag_types::helper::TagKeywordUsage;
 use crate::parser::tag_types::helper::TagType;
 use crate::parser::tag_types::helper::TagTypeMember;
-use crate::parser::tag_types::helper::parse_tag_type_declaration;
-use crate::parser::tag_types::helper::parse_tag_type_definition_and_vars;
-use crate::parser::tag_types::helper::parse_tag_type_variable;
-use crate::parser::tag_types::helper::tag_type_keyword_usage;
 
 #[derive(Clone)]
 pub struct EnumMember {
@@ -37,114 +33,111 @@ impl TagTypeMember for EnumMember {
     }
 }
 
-fn parse_enum_members(lexer: &mut Lexer) -> Result<Vec<EnumMember>, String> {
-    let mut all_members = Vec::new();
+impl Parser {
+    fn parse_enum_members(&mut self) -> Result<Vec<EnumMember>, String> {
+        let mut all_members = Vec::new();
+        while let Some(token) = self.lexer.peek()
+            && !matches!(token, TokenTypes::RCurlyBrace)
+        {
+            if matches!(token, TokenTypes::Operator(OperatorTypes::Comma)) {
+                return Err(String::from("Unexpected comma in enum"));
+            }
 
-    while let Some(token) = lexer.peek()
-        && !matches!(token, TokenTypes::RCurlyBrace)
-    {
-        if matches!(token, TokenTypes::Operator(OperatorTypes::Comma)) {
-            return Err(String::from("Unexpected comma in enum"));
+            let enum_name = self.lexer.expect_extract(|x| match x {
+                TokenTypes::Identifier(name) => Some(name),
+                _ => None,
+            })?;
+
+            let next_token = self.lexer.force_peek("Unexpected end to enum")?;
+
+            let mut enum_value = None;
+
+            if matches!(
+                next_token,
+                TokenTypes::Assignment(AssignmentTypes::SimpleAssignment)
+            ) {
+                self.lexer.advance();
+                enum_value = Some(self.parse_expression(3)?);
+            }
+
+            all_members.push(EnumMember {
+                name: enum_name,
+                value: enum_value,
+            });
+
+            let next_token = self.lexer.force_peek("Unexpected end to enum")?;
+
+            match next_token {
+                TokenTypes::Operator(OperatorTypes::Comma) => {
+                    self.lexer.advance();
+                }
+                TokenTypes::RCurlyBrace => {
+                    break;
+                }
+                unexpected_token => {
+                    return Err(format!(
+                        "Unexpected token of type {unexpected_token}, expected comma or semicolon"
+                    ));
+                }
+            }
         }
 
-        let enum_name = lexer.expect_extract(|x| match x {
-            TokenTypes::Identifier(name) => Some(name),
+        self.lexer.advance();
+
+        Ok(all_members)
+    }
+
+    pub fn parse_enum_definition(&mut self) -> Result<GlobalNode, String> {
+        self.lexer.advance();
+
+        let name = match self.lexer.peek() {
+            Some(TokenTypes::Identifier(name)) => {
+                self.lexer.advance();
+                Some(name)
+            }
             _ => None,
-        })?;
+        };
 
-        let next_token = lexer.force_peek("Unexpected end to enum")?;
+        self.lexer.advance();
 
-        let mut enum_value = None;
+        let members = self.parse_enum_members()?;
 
-        if matches!(
-            next_token,
-            TokenTypes::Assignment(AssignmentTypes::SimpleAssignment)
-        ) {
-            lexer.advance();
-            enum_value = Some(parse_expression(lexer, 3)?);
+        if members.len() == 0 {
+            return Err(String::from(
+                "Expected enum definition to have at least one variant",
+            ));
         }
 
-        all_members.push(EnumMember {
-            name: enum_name,
-            value: enum_value,
-        });
+        Ok(GlobalNode::Enum(TagType {
+            name,
+            members,
+            is_defined: true,
+        }))
+    }
 
-        let next_token = lexer.force_peek("Unexpected end to enum")?;
-
-        match next_token {
-            TokenTypes::Operator(OperatorTypes::Comma) => {
-                lexer.advance();
-            }
-            TokenTypes::RCurlyBrace => {
-                break;
-            }
-            unexpected_token => {
-                return Err(format!(
-                    "Unexpected token of type {unexpected_token}, expected comma or semicolon"
-                ));
-            }
+    pub fn parse_enum_keyword(&mut self) -> Result<Vec<GlobalNode>, String> {
+        let usage = self.tag_type_keyword_usage()?;
+        if matches!(usage, TagKeywordUsage::Variable) {
+            return self.parse_variable_statement();
         }
-    }
 
-    lexer.advance();
-
-    Ok(all_members)
-}
-
-pub fn parse_enum_definition(lexer: &mut Lexer) -> Result<GlobalNode, String> {
-    lexer.advance();
-
-    let name = match lexer.peek() {
-        Some(TokenTypes::Identifier(name)) => {
-            lexer.advance();
-            Some(name)
+        if matches!(usage, TagKeywordUsage::Definition) {
+            // problem here
+            return self.parse_tag_type_definition_and_vars(Self::parse_enum_definition);
         }
-        _ => None,
-    };
 
-    lexer.advance();
+        if matches!(usage, TagKeywordUsage::Declaration) {
+            return Ok(vec![self.parse_tag_type_declaration(&KeywordTypes::Enum)?]);
+        }
 
-    let members = parse_enum_members(lexer)?;
-
-    if members.len() == 0 {
-        return Err(String::from(
-            "Expected enum definition to have at least one variant",
-        ));
+        unreachable!()
     }
-
-    Ok(GlobalNode::Enum(TagType {
-        name,
-        members,
-        is_defined: true,
-    }))
 }
-
-pub fn parse_enum_keyword(lexer: &mut Lexer) -> Result<Vec<GlobalNode>, String> {
-    let usage = tag_type_keyword_usage(lexer)?;
-    if matches!(usage, TagKeywordUsage::Variable) {
-        return parse_tag_type_variable(lexer);
-    }
-
-    if matches!(usage, TagKeywordUsage::Definition) {
-        return parse_tag_type_definition_and_vars(lexer, parse_enum_definition);
-    }
-
-    if matches!(usage, TagKeywordUsage::Declaration) {
-        return Ok(vec![parse_tag_type_declaration(
-            lexer,
-            &KeywordTypes::Enum,
-        )?]);
-    }
-
-    unreachable!()
-}
-
 // this doesn't need to be tested as heavily as most code is being reused from the struct parser
 // and that code already has been verified
 #[cfg(test)]
 mod tests {
-    use crate::parser::helper::run_tests;
-    use crate::parser::parser::parse_program;
+    use crate::parser::{helper::run_tests, parser::Parser};
 
     #[test]
     fn enum_creation() {
@@ -226,7 +219,6 @@ mod tests {
                 ",
             ),
         ];
-
-        run_tests(parse_program, test_cases);
+        run_tests(Parser::parse_program, test_cases);
     }
 }

@@ -1,6 +1,8 @@
-use crate::lexer::language_features::OperatorTypes;
+use crate::lexer::language_features::{KeywordTypes, OperatorTypes};
 use crate::lexer::lexer::{Lexer, TokenTypes};
-use crate::parser::parser::{GlobalNode, StatementNode};
+use crate::parser::nodes::{GlobalNode, StatementNode};
+use crate::parser::parser::Parser;
+use crate::semantics::semantics::Semantics;
 use std::fmt::Display;
 
 pub fn pretty_clean_string(string: &str) -> String {
@@ -26,14 +28,19 @@ pub fn to_statement(x: Vec<GlobalNode>) -> Vec<StatementNode> {
 #[allow(dead_code)]
 pub fn run_tests<F, T>(parser: F, test_cases: Vec<(&str, &str)>)
 where
-    F: Fn(&mut Lexer) -> Result<T, String>,
+    F: Fn(&mut Parser) -> Result<T, String>,
     T: Display,
 {
     for (test_case, correct_result) in test_cases {
-        let mut lexer =
+        let lexer =
             Lexer::new(&test_case).unwrap_or_else(|_| Lexer::new("\"Lexer Error\"").unwrap());
 
-        let result = parser(&mut lexer).unwrap().to_string();
+        let mut parser_struct = Parser {
+            lexer,
+            semantics: Semantics::default(),
+        };
+
+        let result = parser(&mut parser_struct).unwrap().to_string();
 
         assert_eq!(raw_clean_string(correct_result), raw_clean_string(&result));
     }
@@ -62,4 +69,16 @@ pub fn verify_next_in_comma_list(
     }
 
     return Ok(());
+}
+
+pub fn is_expression(token: &TokenTypes) -> bool {
+    match token {
+        TokenTypes::Literal(_) => true,
+        TokenTypes::Operator(OperatorTypes::LParen) => true,
+        TokenTypes::LCurlyBrace => true,
+        TokenTypes::Identifier(_) => true,
+        TokenTypes::Operator(op) if op.potential_unary() => true,
+        TokenTypes::Keyword(KeywordTypes::Sizeof) => true,
+        _ => false,
+    }
 }

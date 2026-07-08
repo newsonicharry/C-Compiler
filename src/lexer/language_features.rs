@@ -57,13 +57,12 @@ pub enum KeywordTypes {
     Sizeof,
     Struct,
     Switch,
-    Typedef,
     Union,
     While,
 }
 
 impl KeywordTypes {
-    pub const MAPPINGS: &'static [(&'static str, Self); 17] = &[
+    pub const MAPPINGS: &'static [(&'static str, Self); 16] = &[
         ("break", Self::Break),
         ("case", Self::Case),
         ("continue", Self::Continue),
@@ -78,7 +77,6 @@ impl KeywordTypes {
         ("sizeof", Self::Sizeof),
         ("struct", Self::Struct),
         ("switch", Self::Switch),
-        ("typedef", Self::Typedef),
         ("union", Self::Union),
         ("while", Self::While),
     ];
@@ -110,10 +108,11 @@ pub enum DataTypes {
     Static,
     Extern,
     Inline,
+    Typedef,
 }
 
 impl DataTypes {
-    pub const MAPPINGS: &'static [(&'static str, Self); 20] = &[
+    pub const MAPPINGS: &'static [(&'static str, Self); 21] = &[
         ("NOTYPE", Self::NoType),
         ("char", Self::Char),
         ("auto", Self::Auto),
@@ -134,11 +133,12 @@ impl DataTypes {
         ("static", Self::Static),
         ("extern", Self::Extern),
         ("inline", Self::Inline),
+        ("typedef", Self::Typedef),
     ];
 
     pub fn is_storage_specifier(&self) -> bool {
         match self {
-            Self::Register | Self::Static | Self::Extern | Self::Auto => true,
+            Self::Register | Self::Static | Self::Extern | Self::Auto | Self::Typedef => true,
             _ => false,
         }
     }
@@ -155,6 +155,13 @@ impl DataTypes {
         match *self {
             // _Complex is techinally its own distict type but doing that would be a headache so this is used instead
             Self::Signed | Self::Unsigned | Self::Short | Self::Long | Self::_Complex => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_function_specifier(&self) -> bool {
+        match *self {
+            Self::Inline => true,
             _ => false,
         }
     }

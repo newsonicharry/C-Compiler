@@ -45,7 +45,7 @@ impl Display for TokenTypes {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct Lexer {
     tokens: Vec<(TokenTypes, usize)>,
     set_index: usize,

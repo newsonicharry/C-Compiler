@@ -1,17 +1,14 @@
 use crate::lexer::language_features::OperatorTypes;
 use crate::lexer::language_features::{KeywordTypes, LiteralTypes};
-use crate::lexer::lexer::{Lexer, TokenTypes};
-use crate::parser::parser::GlobalNode;
+use crate::lexer::lexer::TokenTypes;
+use crate::parser::nodes::GlobalNode;
+use crate::parser::parser::Parser;
 use crate::parser::tag_types::enum_parser::EnumMember;
-use crate::parser::tag_types::helper::parse_tag_type_definition_and_vars;
-use crate::parser::tag_types::helper::parse_tag_type_variable;
-use crate::parser::tag_types::helper::{
-    TagKeywordUsage, parse_tag_type_declaration, tag_type_keyword_usage,
-};
-use crate::parser::tag_types::helper::{TagType, parse_struct_or_union_definition};
-use crate::parser::tag_types::helper::{TagTypeMember, get_nested_member_if_some};
+use crate::parser::tag_types::helper::TagKeywordUsage;
+use crate::parser::tag_types::helper::TagType;
+use crate::parser::tag_types::helper::TagTypeMember;
 use crate::parser::tag_types::union_parser::UnionMember;
-use crate::parser::type_parser::{TypeNode, parse_type};
+use crate::parser::type_parser::TypeNode;
 
 #[derive(Clone)]
 pub enum StructMember {
@@ -60,98 +57,103 @@ impl TagTypeMember for StructMember {
     }
 }
 
-/// Parses anything that uses a struct keyword
-/// This includes struct definitions, declarations and variables
-pub fn parse_struct_keyword(lexer: &mut Lexer) -> Result<Vec<GlobalNode>, String> {
-    let usage = tag_type_keyword_usage(lexer)?;
+impl Parser {
+    /// Parses anything that uses a struct keyword
+    /// This includes struct definitions, declarations and variables
+    pub fn parse_struct_keyword(&mut self) -> Result<Vec<GlobalNode>, String> {
+        let usage = self.tag_type_keyword_usage()?;
 
-    if matches!(usage, TagKeywordUsage::Variable) {
-        return parse_tag_type_variable(lexer);
+        if matches!(usage, TagKeywordUsage::Variable) {
+            return self.parse_variable_statement();
+        }
+
+        if matches!(usage, TagKeywordUsage::Definition) {
+            let parse_definition = |parser: &mut Parser| {
+                return parser.parse_struct_or_union_definition(Self::parse_struct_member);
+            };
+            return self.parse_tag_type_definition_and_vars(parse_definition);
+        }
+
+        // if its a declaration
+        if matches!(usage, TagKeywordUsage::Declaration) {
+            return Ok(vec![
+                self.parse_tag_type_declaration(&KeywordTypes::Struct)?,
+            ]);
+        }
+
+        unreachable!()
     }
 
-    if matches!(usage, TagKeywordUsage::Definition) {
-        let parse_definition = |lexer: &mut Lexer| {
-            return parse_struct_or_union_definition(lexer, parse_struct_member);
-        };
-        return parse_tag_type_definition_and_vars(lexer, parse_definition);
-    }
+    fn parse_nested_struct_tag_type(&mut self) -> Result<Option<Vec<StructMember>>, String> {
+        let mut all_members = Vec::new();
 
-    // if its a declaration
-    if matches!(usage, TagKeywordUsage::Declaration) {
-        return Ok(vec![parse_tag_type_declaration(
-            lexer,
-            &KeywordTypes::Struct,
-        )?]);
-    }
-
-    unreachable!()
-}
-
-fn parse_nested_tag_type(lexer: &mut Lexer) -> Result<Option<Vec<StructMember>>, String> {
-    let mut all_members = Vec::new();
-
-    let Some(items) = get_nested_member_if_some(lexer)? else {
-        return Ok(None);
-    };
-
-    for item in items {
-        let member = match item {
-            GlobalNode::Struct(data) => StructMember::DefinedStruct(data),
-            GlobalNode::Enum(data) => StructMember::DefinedEnum(data),
-            GlobalNode::Union(data) => StructMember::DefinedUnion(data),
-
-            GlobalNode::Initalizer { var_type, .. } => StructMember::NormalType {
-                item_type: var_type,
-                bit_field: None,
-            },
-
-            _ => unreachable!(),
+        let Some(items) = self.get_nested_member_if_some()? else {
+            return Ok(None);
         };
 
-        all_members.push(member);
+        for item in items {
+            let member = match item {
+                GlobalNode::Struct(data) => StructMember::DefinedStruct(data),
+                GlobalNode::Enum(data) => StructMember::DefinedEnum(data),
+                GlobalNode::Union(data) => StructMember::DefinedUnion(data),
+
+                GlobalNode::Initalizer { var_type, .. } => StructMember::NormalType {
+                    item_type: var_type,
+                    bit_field: None,
+                },
+
+                _ => unreachable!(),
+            };
+
+            all_members.push(member);
+        }
+
+        Ok(Some(all_members))
     }
 
-    Ok(Some(all_members))
+    fn parse_struct_member(&mut self) -> Result<Vec<StructMember>, String> {
+        if let Some(nested_members) = self.parse_nested_struct_tag_type()? {
+            return Ok(nested_members);
+        }
+
+        let member = self.parse_type()?;
+
+        if member.has_invalid_tag_type_specifier() {
+            return Err(String::from(
+                "Unexpected tag type specifier found for struct member",
+            ));
+        }
+
+        let Some(next_token) = self.lexer.peek() else {
+            return Err(String::from(
+                "Expected either a semicolon or colon at the end of struct member, got nothing",
+            ));
+        };
+
+        let mut bit_field = None;
+
+        if matches!(next_token, TokenTypes::Operator(OperatorTypes::Colon)) {
+            self.lexer.advance();
+
+            bit_field = Some(self.lexer.expect_extract(|x| match x {
+                TokenTypes::Literal(LiteralTypes::Integer(integer)) => Some(integer.value as u64),
+                _ => None,
+            })?);
+        }
+
+        self.lexer.expect(|x| matches!(x, TokenTypes::Semicolon))?;
+
+        let final_member = StructMember::NormalType {
+            item_type: member,
+            bit_field,
+        };
+
+        Ok(vec![final_member])
+    }
 }
-
-fn parse_struct_member(lexer: &mut Lexer) -> Result<Vec<StructMember>, String> {
-    if let Some(nested_members) = parse_nested_tag_type(lexer)? {
-        return Ok(nested_members);
-    }
-
-    let member = parse_type(lexer)?;
-
-    let Some(next_token) = lexer.peek() else {
-        return Err(String::from(
-            "Expected either a semicolon or colon at the end of struct member, got nothing",
-        ));
-    };
-
-    let mut bit_field = None;
-
-    if matches!(next_token, TokenTypes::Operator(OperatorTypes::Colon)) {
-        lexer.advance();
-
-        bit_field = Some(lexer.expect_extract(|x| match x {
-            TokenTypes::Literal(LiteralTypes::Integer(integer)) => Some(integer.value as u64),
-            _ => None,
-        })?);
-    }
-
-    lexer.expect(|x| matches!(x, TokenTypes::Semicolon))?;
-
-    let final_member = StructMember::NormalType {
-        item_type: member,
-        bit_field,
-    };
-
-    Ok(vec![final_member])
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::parser::helper::run_tests;
-    use crate::parser::parser::parse_program;
+    use crate::parser::{helper::run_tests, parser::Parser};
 
     #[test]
     fn struct_creation() {
@@ -184,7 +186,7 @@ mod tests {
             ),
         ];
 
-        run_tests(parse_program, test_cases);
+        run_tests(Parser::parse_program, test_cases);
     }
 
     #[test]
@@ -237,7 +239,7 @@ mod tests {
             ),
         ];
 
-        run_tests(parse_program, test_cases);
+        run_tests(Parser::parse_program, test_cases);
     }
 
     #[test]
@@ -279,7 +281,7 @@ mod tests {
             ),
         ];
 
-        run_tests(parse_program, test_cases);
+        run_tests(Parser::parse_program, test_cases);
     }
 
     #[test]
@@ -361,7 +363,7 @@ mod tests {
             ),
         ];
 
-        run_tests(parse_program, test_cases);
+        run_tests(Parser::parse_program, test_cases);
     }
 
     #[test]
@@ -438,7 +440,7 @@ mod tests {
             ),
         ];
 
-        run_tests(parse_program, test_cases);
+        run_tests(Parser::parse_program, test_cases);
     }
 
     // TODO: Add nested enums
@@ -556,6 +558,6 @@ mod tests {
             ),
         ];
 
-        run_tests(parse_program, test_cases);
+        run_tests(Parser::parse_program, test_cases);
     }
 }

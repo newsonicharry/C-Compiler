@@ -1,18 +1,13 @@
 use crate::lexer::language_features::KeywordTypes;
-use crate::lexer::lexer::{Lexer, TokenTypes};
-use crate::parser::parser::GlobalNode;
+use crate::lexer::lexer::TokenTypes;
+use crate::parser::nodes::GlobalNode;
+use crate::parser::parser::Parser;
 use crate::parser::tag_types::enum_parser::EnumMember;
+use crate::parser::tag_types::helper::TagKeywordUsage;
+use crate::parser::tag_types::helper::TagType;
 use crate::parser::tag_types::helper::TagTypeMember;
-use crate::parser::tag_types::helper::parse_tag_type_variable;
-use crate::parser::tag_types::helper::{
-    TagKeywordUsage, parse_tag_type_declaration, tag_type_keyword_usage,
-};
-use crate::parser::tag_types::helper::{TagType, parse_struct_or_union_definition};
-use crate::parser::tag_types::helper::{
-    get_nested_member_if_some, parse_tag_type_definition_and_vars,
-};
 use crate::parser::tag_types::struct_parser::StructMember;
-use crate::parser::type_parser::{TypeNode, parse_type};
+use crate::parser::type_parser::TypeNode;
 
 #[derive(Clone)]
 pub enum UnionMember {
@@ -51,75 +46,78 @@ impl TagTypeMember for UnionMember {
     }
 }
 
-pub fn parse_union_keyword(lexer: &mut Lexer) -> Result<Vec<GlobalNode>, String> {
-    let usage = tag_type_keyword_usage(lexer)?;
+impl Parser {
+    pub fn parse_union_keyword(&mut self) -> Result<Vec<GlobalNode>, String> {
+        let usage = self.tag_type_keyword_usage()?;
 
-    if matches!(usage, TagKeywordUsage::Variable) {
-        return parse_tag_type_variable(lexer);
+        if matches!(usage, TagKeywordUsage::Variable) {
+            return self.parse_variable_statement();
+        }
+
+        if matches!(usage, TagKeywordUsage::Definition) {
+            let parse_definition = |parser: &mut Parser| {
+                return parser.parse_struct_or_union_definition(Self::parse_union_member);
+            };
+            return self.parse_tag_type_definition_and_vars(parse_definition);
+        }
+
+        // if its a declaration
+        if matches!(usage, TagKeywordUsage::Declaration) {
+            return Ok(vec![self.parse_tag_type_declaration(&KeywordTypes::Union)?]);
+        }
+
+        unreachable!()
     }
 
-    if matches!(usage, TagKeywordUsage::Definition) {
-        let parse_definition = |lexer: &mut Lexer| {
-            return parse_struct_or_union_definition(lexer, parse_union_member);
-        };
-        return parse_tag_type_definition_and_vars(lexer, parse_definition);
-    }
+    fn parse_nested_tag_type(&mut self) -> Result<Option<Vec<UnionMember>>, String> {
+        let mut all_members = Vec::new();
 
-    // if its a declaration
-    if matches!(usage, TagKeywordUsage::Declaration) {
-        return Ok(vec![parse_tag_type_declaration(
-            lexer,
-            &KeywordTypes::Struct,
-        )?]);
-    }
-
-    unreachable!()
-}
-
-fn parse_nested_tag_type(lexer: &mut Lexer) -> Result<Option<Vec<UnionMember>>, String> {
-    let mut all_members = Vec::new();
-
-    let Some(items) = get_nested_member_if_some(lexer)? else {
-        return Ok(None);
-    };
-
-    for item in items {
-        let member = match item {
-            GlobalNode::Struct(data) => UnionMember::DefinedStruct(data),
-            GlobalNode::Enum(data) => UnionMember::DefinedEnum(data),
-            GlobalNode::Union(data) => UnionMember::DefinedUnion(data),
-
-            GlobalNode::Initalizer { var_type, .. } => UnionMember::NormalType {
-                item_type: var_type,
-            },
-
-            _ => unreachable!(),
+        let Some(items) = self.get_nested_member_if_some()? else {
+            return Ok(None);
         };
 
-        all_members.push(member);
+        for item in items {
+            let member = match item {
+                GlobalNode::Struct(data) => UnionMember::DefinedStruct(data),
+                GlobalNode::Enum(data) => UnionMember::DefinedEnum(data),
+                GlobalNode::Union(data) => UnionMember::DefinedUnion(data),
+
+                GlobalNode::Initalizer { var_type, .. } => UnionMember::NormalType {
+                    item_type: var_type,
+                },
+
+                _ => unreachable!(),
+            };
+
+            all_members.push(member);
+        }
+
+        Ok(Some(all_members))
     }
 
-    Ok(Some(all_members))
-}
+    fn parse_union_member(&mut self) -> Result<Vec<UnionMember>, String> {
+        if let Some(nested_members) = self.parse_nested_tag_type()? {
+            return Ok(nested_members);
+        }
 
-fn parse_union_member(lexer: &mut Lexer) -> Result<Vec<UnionMember>, String> {
-    if let Some(nested_members) = parse_nested_tag_type(lexer)? {
-        return Ok(nested_members);
+        let member = self.parse_type()?;
+
+        if member.has_invalid_tag_type_specifier() {
+            return Err(String::from(
+                "Unexpected tag type specifier found for union member",
+            ));
+        }
+
+        self.lexer.expect(|x| matches!(x, TokenTypes::Semicolon))?;
+
+        let final_member = UnionMember::NormalType { item_type: member };
+
+        Ok(vec![final_member])
     }
-
-    let member = parse_type(lexer)?;
-
-    lexer.expect(|x| matches!(x, TokenTypes::Semicolon))?;
-
-    let final_member = UnionMember::NormalType { item_type: member };
-
-    Ok(vec![final_member])
 }
-
 #[cfg(test)]
 mod tests {
-    use crate::parser::helper::run_tests;
-    use crate::parser::parser::parse_program;
+    use crate::parser::{helper::run_tests, parser::Parser};
 
     #[test]
     fn union_creation() {
@@ -223,6 +221,6 @@ mod tests {
             ),
         ];
 
-        run_tests(parse_program, test_cases);
+        run_tests(Parser::parse_program, test_cases);
     }
 }
