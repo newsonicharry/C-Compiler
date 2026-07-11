@@ -2,12 +2,13 @@ use crate::parser::expression_parser::ExprNode;
 use crate::parser::helper::pretty_clean_string;
 use crate::parser::if_statement::IfStatement;
 use crate::parser::jump_label::JumpLabel;
-use crate::parser::tag_types::enum_parser::EnumMember;
-use crate::parser::tag_types::helper::TagType;
-use crate::parser::tag_types::struct_parser::StructMember;
-use crate::parser::tag_types::union_parser::UnionMember;
+use crate::parser::tag_types::helper::TagTypeData;
 use crate::parser::type_parser::TypeNode;
 use std::fmt::Display;
+
+pub trait IndentDisplay {
+    fn indent_display(&self, indent: usize) -> String;
+}
 
 pub struct Root(pub Vec<GlobalNode>);
 
@@ -39,26 +40,22 @@ pub enum GlobalNode {
         r_value: Option<ExprNode>,
     },
 
-    Union(TagType<UnionMember>),
-    Struct(TagType<StructMember>),
-    Enum(TagType<EnumMember>),
-    // Typedef is on an eternal todo list
-    // It'll be done, just not right now...
+    TagType(TagTypeData),
 }
 
 impl Display for GlobalNode {
     fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let final_str = self.display(0);
+        let final_str = self.indent_display(0);
 
         write!(display, "{final_str}")
     }
 }
 
-impl GlobalNode {
-    fn display(&self, indentation: usize) -> String {
+impl IndentDisplay for GlobalNode {
+    fn indent_display(&self, indent: usize) -> String {
         let mut output = String::new();
 
-        let str_indent = " ".repeat(indentation);
+        let str_indent = " ".repeat(indent);
 
         match self {
             Self::Function { signature, body } => {
@@ -66,7 +63,7 @@ impl GlobalNode {
 
                 if let Some(body) = body {
                     output.pop();
-                    output.push_str(&format!("\n{}", body.display(indentation + 2)));
+                    output.push_str(&format!("\n{}", body.indent_display(indent + 2)));
                     output.push_str(")");
                 }
             }
@@ -75,22 +72,14 @@ impl GlobalNode {
                 output.push_str(&format!("{str_indent}(Variable {var_type}"));
 
                 if let Some(expression) = r_value.clone() {
-                    output.push_str(&format!("\n{}", &expression.display(indentation + 2)));
+                    output.push_str(&format!("\n{}", &expression.display(indent + 2)));
                 }
 
                 output.push_str(")");
             }
 
-            Self::Struct(data) => {
-                output.push_str(&data.display(indentation));
-            }
-
-            Self::Enum(data) => {
-                output.push_str(&data.display(indentation));
-            }
-
-            Self::Union(data) => {
-                output.push_str(&data.display(indentation));
+            Self::TagType(data) => {
+                output.push_str(&data.indent_display(indent));
             }
         }
 
@@ -143,22 +132,22 @@ pub enum StatementNode {
 
 impl Display for StatementNode {
     fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let final_str = Self::display(self, 0);
+        let final_str = self.indent_display(0);
 
         write!(display, "{final_str}")
     }
 }
 
-impl StatementNode {
-    pub fn display(&self, indentation: usize) -> String {
+impl IndentDisplay for StatementNode {
+    fn indent_display(&self, indent: usize) -> String {
         let mut output = String::new();
-        let str_indent = " ".repeat(indentation);
-        let next_str_indent = " ".repeat(indentation + 2);
+        let str_indent = " ".repeat(indent);
+        let next_str_indent = " ".repeat(indent + 2);
 
         match self {
             Self::Block { statements } => {
                 for (i, statement) in statements.iter().enumerate() {
-                    output.push_str(&format!("{}", statement.display(indentation)));
+                    output.push_str(&format!("{}", statement.indent_display(indent)));
                     if i != statements.len() - 1 {
                         output.push('\n');
                     }
@@ -168,12 +157,12 @@ impl StatementNode {
             Self::Expression(expr) => {
                 output.push_str(&format!(
                     "{str_indent}(Expr\n{})",
-                    expr.clone().display(indentation + 2)
+                    expr.clone().display(indent + 2)
                 ));
             }
 
             Self::General(global_node) => {
-                output.push_str(&global_node.display(indentation));
+                output.push_str(&global_node.indent_display(indent));
             }
 
             Self::Return(expr) => {
@@ -187,7 +176,7 @@ impl StatementNode {
             }
 
             Self::If(if_statement) => {
-                output.push_str(&if_statement.display(indentation));
+                output.push_str(&if_statement.indent_display(indent));
             }
 
             Self::Semicolon => {
@@ -206,12 +195,12 @@ impl StatementNode {
                 output.push_str(&format!("{str_indent}(While\n"));
                 output.push_str(&format!(
                     "{next_str_indent}(Condition\n{})\n",
-                    conditional.clone().display(indentation + 4)
+                    conditional.clone().display(indent + 4)
                 ));
 
                 output.push_str(&format!(
                     "{next_str_indent}(Body\n{})",
-                    body.display(indentation + 4)
+                    body.indent_display(indent + 4)
                 ));
             }
 
@@ -219,12 +208,12 @@ impl StatementNode {
                 output.push_str(&format!("{str_indent}(DoWhile\n"));
                 output.push_str(&format!(
                     "{next_str_indent}(Condition\n{})\n",
-                    conditional.clone().display(indentation + 4)
+                    conditional.clone().display(indent + 4)
                 ));
 
                 output.push_str(&format!(
                     "{next_str_indent}(Body\n{})",
-                    body.display(indentation + 4)
+                    body.indent_display(indent + 4)
                 ));
             }
 
@@ -238,27 +227,27 @@ impl StatementNode {
 
                 output.push_str(&format!("{next_str_indent}(Init"));
                 if let Some(init) = init {
-                    output.push_str(&format!("\n{}", init.display(indentation + 4)));
+                    output.push_str(&format!("\n{}", init.indent_display(indent + 4)));
                 }
                 output.push(')');
 
                 output.push_str(&format!("\n{next_str_indent}(Body"));
                 if let Some(condition) = condition {
-                    output.push_str(&format!("\n{}", condition.clone().display(indentation + 4)));
+                    output.push_str(&format!("\n{}", condition.clone().display(indent + 4)));
                 }
 
                 output.push(')');
 
                 output.push_str(&format!("\n{next_str_indent}(Iterate"));
                 if let Some(iteration) = iteration {
-                    output.push_str(&format!("\n{}", iteration.clone().display(indentation + 4)));
+                    output.push_str(&format!("\n{}", iteration.clone().display(indent + 4)));
                 }
 
                 output.push(')');
 
                 output.push_str(&format!(
                     "\n{next_str_indent}(Body\n{})",
-                    body.display(indentation + 4)
+                    body.indent_display(indent + 4)
                 ));
             }
 
@@ -266,7 +255,7 @@ impl StatementNode {
                 output.push_str(&format!(
                     "{str_indent}(Switch (CaseLabel {})\n{})",
                     pretty_clean_string(&case_label.to_string()),
-                    body.display(indentation + 2)
+                    body.indent_display(indent + 2)
                 ));
             }
 

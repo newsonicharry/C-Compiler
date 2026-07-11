@@ -3,6 +3,7 @@ use crate::lexer::lexer::TokenTypes;
 use crate::parser::expression_parser::ExprNode;
 use crate::parser::helper::verify_next_in_comma_list;
 use crate::parser::parser::Parser;
+use crate::parser::tag_types::helper::TagTypeKind;
 use crate::semantics::semantics::IdentifierType;
 use std::fmt::Display;
 
@@ -54,18 +55,9 @@ pub enum TypeNode {
         held_value: Box<TypeNode>,
     },
 
-    Struct {
-        name: Option<String>, // if its declared from an anonymous struct
-        qualifiers: Vec<DataTypes>,
-    },
-
-    Enum {
-        name: Option<String>,
-        qualifiers: Vec<DataTypes>,
-    },
-
-    Union {
-        name: Option<String>,
+    TagType {
+        kind: TagTypeKind,
+        name: String,
         qualifiers: Vec<DataTypes>,
     },
 
@@ -77,34 +69,18 @@ pub enum TypeNode {
 }
 
 impl TypeNode {
-    pub fn contains_tag_type(&self, tag_type: &KeywordTypes) -> bool {
-        let is_equal_to_tag_type = match tag_type {
-            KeywordTypes::Struct => {
-                matches!(self, TypeNode::Struct { .. })
-            }
-
-            KeywordTypes::Enum => {
-                matches!(self, TypeNode::Enum { .. })
-            }
-
-            KeywordTypes::Union => {
-                matches!(self, TypeNode::Union { .. })
-            }
-
-            _ => unreachable!(),
-        };
-
-        if is_equal_to_tag_type {
-            return true;
+    pub fn contains_tag_type(&self) -> Option<TagTypeKind> {
+        if let TypeNode::TagType { kind, .. } = self {
+            return Some(kind.clone());
         }
 
         match self {
             TypeNode::Variable { held_value, .. }
             | TypeNode::Normal { held_value, .. }
             | TypeNode::Pointer { held_value, .. }
-            | TypeNode::Array { held_value, .. } => held_value.contains_tag_type(tag_type),
+            | TypeNode::Array { held_value, .. } => held_value.contains_tag_type(),
 
-            _ => false,
+            _ => None,
         }
     }
 
@@ -152,7 +128,7 @@ impl TypeNode {
 
             Self::Empty => *self = nested_value.clone(),
 
-            Self::Struct { .. } | Self::Enum { .. } | Self::Union { .. } => {
+            Self::TagType { .. } => {
                 panic!("Tag type type is a unique type with no internal values")
             }
         }
@@ -252,10 +228,8 @@ impl TypeNode {
         output.push_str(&format!("{})", Self::display(held_value)));
     }
 
-    fn display_tag_type(output: &mut String, name: &Option<String>, qualifiers: &Vec<DataTypes>) {
-        if let Some(name) = name {
-            output.push_str(&format!(" {name}"));
-        }
+    fn display_tag_type(output: &mut String, name: &str, qualifiers: &Vec<DataTypes>) {
+        output.push_str(&format!(" {name}"));
 
         if !qualifiers.is_empty() {
             output.push_str(" (Qualifiers");
@@ -320,18 +294,17 @@ impl TypeNode {
                 output.push_str(")");
             }
 
-            TypeNode::Struct { name, qualifiers } => {
-                output.push_str(&format!("(Struct"));
-                Self::display_tag_type(&mut output, name, qualifiers);
-            }
+            TypeNode::TagType {
+                kind,
+                name,
+                qualifiers,
+            } => {
+                match kind {
+                    TagTypeKind::Struct => output.push_str(&format!("(Struct")),
+                    TagTypeKind::Union => output.push_str(&format!("(Union")),
+                    TagTypeKind::Enum => output.push_str(&format!("(Enum")),
+                }
 
-            TypeNode::Enum { name, qualifiers } => {
-                output.push_str(&format!("(Enum"));
-                Self::display_tag_type(&mut output, name, qualifiers);
-            }
-
-            TypeNode::Union { name, qualifiers } => {
-                output.push_str(&format!("(Union"));
                 Self::display_tag_type(&mut output, name, qualifiers);
             }
 
@@ -568,30 +541,13 @@ impl Parser {
             _ => None,
         })?;
 
-        match keyword_type {
-            KeywordTypes::Struct => {
-                return Ok(TypeNode::Struct {
-                    name: Some(tag_type_name),
-                    qualifiers: qualifiers.clone(),
-                });
-            }
+        let tag_type_kind: TagTypeKind = (&keyword_type).into();
 
-            KeywordTypes::Enum => {
-                return Ok(TypeNode::Enum {
-                    name: Some(tag_type_name),
-                    qualifiers: qualifiers.clone(),
-                });
-            }
-
-            KeywordTypes::Union => {
-                return Ok(TypeNode::Union {
-                    name: Some(tag_type_name),
-                    qualifiers: qualifiers.clone(),
-                });
-            }
-
-            _ => unreachable!(),
-        }
+        Ok(TypeNode::TagType {
+            kind: tag_type_kind,
+            name: tag_type_name,
+            qualifiers: qualifiers.clone(),
+        })
     }
 
     fn parse_normal_type(&mut self) -> Result<TypeNode, String> {

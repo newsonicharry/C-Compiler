@@ -1,46 +1,135 @@
-use crate::lexer::language_features::AssignmentTypes;
-use crate::lexer::language_features::DataTypes;
-use crate::lexer::language_features::KeywordTypes;
-use crate::lexer::language_features::OperatorTypes;
+use crate::lexer::language_features::{AssignmentTypes, DataTypes, KeywordTypes, OperatorTypes};
 use crate::lexer::lexer::TokenTypes;
-use crate::parser::nodes::GlobalNode;
+use crate::parser::expression_parser::ExprNode;
+use crate::parser::helper::pretty_clean_string;
+use crate::parser::nodes::{GlobalNode, IndentDisplay};
 use crate::parser::parser::Parser;
-use crate::parser::tag_types::enum_parser::EnumMember;
-use crate::parser::tag_types::struct_parser::StructMember;
-use crate::parser::tag_types::union_parser::UnionMember;
 use crate::parser::type_parser::TypeNode;
 
-pub trait TagTypeMember {
-    fn display_member(&self, indentation: usize) -> String;
+#[derive(Clone)]
+pub enum TagTypeMember {
+    StructMember {
+        item_type: TypeNode,
+        bit_field: Option<u64>,
+    },
+    UnionMember {
+        item_type: TypeNode,
+    },
+    EnumMember {
+        name: String,
+        value: Option<ExprNode>,
+    },
+    TagType(TagTypeData),
 }
 
-pub trait ToGlobal {
-    fn to_global(&self) -> GlobalNode;
+impl IndentDisplay for TagTypeMember {
+    fn indent_display(&self, indent: usize) -> String {
+        match self {
+            Self::StructMember { .. } => self.struct_display_helper(indent),
+            Self::UnionMember { .. } => self.union_display_helper(indent),
+            Self::EnumMember { .. } => self.enum_display_helper(indent),
+            Self::TagType(tag_type_data) => tag_type_data.indent_display(indent + 2),
+        }
+    }
+}
+
+impl TagTypeMember {
+    fn struct_display_helper(&self, indent: usize) -> String {
+        let Self::StructMember {
+            item_type,
+            bit_field,
+        } = self
+        else {
+            unreachable!()
+        };
+
+        let mut output = String::new();
+        let indent_str = " ".repeat(indent);
+
+        output += &format!("{indent_str}(Member {}", item_type);
+
+        if let Some(bitfield) = bit_field {
+            output.push_str(&format!("(Bitfield {})", bitfield.to_string()));
+        }
+
+        output.push(')');
+
+        output
+    }
+
+    fn union_display_helper(&self, indent: usize) -> String {
+        let Self::UnionMember { item_type } = self else {
+            unreachable!()
+        };
+
+        let indent_str = " ".repeat(indent);
+        format!("{indent_str}(Member {})", item_type)
+    }
+
+    fn enum_display_helper(&self, indent: usize) -> String {
+        let Self::EnumMember { name, value } = self else {
+            unreachable!()
+        };
+
+        let indent_str = " ".repeat(indent);
+        let mut output = format!("{indent_str}(Member {}", name);
+
+        if let Some(enum_value) = &value {
+            output.push_str(&format!(
+                " (Value {})",
+                pretty_clean_string(&enum_value.to_string())
+            ));
+        }
+
+        output.push(')');
+        output
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TagTypeKind {
+    Struct,
+    Union,
+    Enum,
+}
+
+impl From<&KeywordTypes> for TagTypeKind {
+    fn from(value: &KeywordTypes) -> Self {
+        match value {
+            KeywordTypes::Struct => Self::Struct,
+            KeywordTypes::Enum => Self::Enum,
+            KeywordTypes::Union => Self::Union,
+            _ => panic!("Expected keyword type struct, enum or union for tag type"),
+        }
+    }
 }
 
 #[derive(Clone)]
-pub struct TagType<T> {
+pub struct TagTypeData {
+    pub kind: TagTypeKind,
     pub is_defined: bool,
     pub name: Option<String>,
-    pub members: Vec<T>,
+    pub members: Vec<TagTypeMember>,
 }
 
-impl ToGlobal for TagType<StructMember> {
-    fn to_global(&self) -> GlobalNode {
-        GlobalNode::Struct(self.clone())
+impl TagTypeData {
+    pub fn as_type(&self, properties: &Vec<DataTypes>) -> TypeNode {
+        if self.name.is_none() {
+            panic!("TagTypeData::as_type can only be called after tag type is given a name")
+        }
+
+        let name = self.name.as_ref().unwrap();
+
+        TypeNode::TagType {
+            kind: self.kind.clone(),
+            name: name.to_string(),
+            qualifiers: properties.clone(),
+        }
     }
-}
 
-impl ToGlobal for TagType<UnionMember> {
-    fn to_global(&self) -> GlobalNode {
-        GlobalNode::Union(self.clone())
-    }
-}
-
-impl<T: TagTypeMember> TagType<T> {
-    fn display_generic(&self, tag_type_name: &str, indentation: usize) -> String {
+    fn indent_display_helper(&self, tag_type_name: &str, indent: usize) -> String {
         let mut output = String::new();
-        let indent_str = " ".repeat(indentation);
+        let indent_str = " ".repeat(indent);
         output.push_str(&format!("{indent_str}({tag_type_name}"));
         if let Some(name) = self.name.clone() {
             output.push_str(&format!(" {name}"));
@@ -50,7 +139,7 @@ impl<T: TagTypeMember> TagType<T> {
             output.push_str(&format!(" (Members"));
 
             for member in &self.members {
-                output.push_str(&format!("\n{}", member.display_member(indentation + 2)));
+                output.push_str(&format!("\n{}", member.indent_display(indent + 2)));
             }
 
             if !self.members.is_empty() {
@@ -65,21 +154,13 @@ impl<T: TagTypeMember> TagType<T> {
     }
 }
 
-impl TagType<EnumMember> {
-    pub fn display(&self, indentation: usize) -> String {
-        self.display_generic("Enum", indentation)
-    }
-}
-
-impl TagType<StructMember> {
-    pub fn display(&self, indentation: usize) -> String {
-        self.display_generic("Struct", indentation)
-    }
-}
-
-impl TagType<UnionMember> {
-    pub fn display(&self, indentation: usize) -> String {
-        self.display_generic("Union", indentation)
+impl IndentDisplay for TagTypeData {
+    fn indent_display(&self, indent: usize) -> String {
+        match self.kind {
+            TagTypeKind::Struct => self.indent_display_helper("Struct", indent),
+            TagTypeKind::Enum => self.indent_display_helper("Enum", indent),
+            TagTypeKind::Union => self.indent_display_helper("Union", indent),
+        }
     }
 }
 
@@ -158,30 +239,36 @@ impl Parser {
 
     /// Determines if a sequence of tokens uses a certain tag type
     /// Used within the main parser to determine if it should go to the struct parser
-    pub fn is_tag_type_keyword(&mut self, keyword: &KeywordTypes) -> Result<bool, String> {
+    pub fn is_tag_type_keyword(&mut self) -> Result<Option<TagTypeKind>, String> {
         self.lexer.set_flag();
         let _ = self.parse_tag_type_qualifiers();
 
         let curr_token = self.lexer.force_peek("Expected next token, got nothing")?;
-        if curr_token == TokenTypes::Keyword(*keyword) {
+        if let TokenTypes::Keyword(keyword) = curr_token {
             self.lexer.recede_to_flag();
-            return Ok(true);
+            match keyword {
+                KeywordTypes::Struct => return Ok(Some(TagTypeKind::Struct)),
+                KeywordTypes::Union => return Ok(Some(TagTypeKind::Union)),
+                KeywordTypes::Enum => return Ok(Some(TagTypeKind::Enum)),
+
+                _ => {}
+            };
         }
 
         if matches!(curr_token, TokenTypes::Keyword(_)) {
             self.lexer.recede_to_flag();
-            return Ok(false);
+            return Ok(None);
         }
 
         let parsed_type = self.parse_type()?;
 
         self.lexer.recede_to_flag();
 
-        if parsed_type.contains_tag_type(keyword) {
-            return Ok(true);
+        if let Some(tag_type_kind) = parsed_type.contains_tag_type() {
+            return Ok(Some(tag_type_kind));
         }
 
-        Ok(false)
+        Ok(None)
     }
 
     /// Parses tag types declarations
@@ -204,27 +291,12 @@ impl Parser {
 
         self.parse_tag_type_qualifiers()?;
 
-        let declared_tag_type = match keyword {
-            KeywordTypes::Struct => GlobalNode::Struct(TagType {
-                is_defined: false,
-                name: Some(tag_type_name),
-                members: vec![],
-            }),
-
-            KeywordTypes::Union => GlobalNode::Union(TagType {
-                is_defined: false,
-                name: Some(tag_type_name),
-                members: vec![],
-            }),
-
-            KeywordTypes::Enum => GlobalNode::Enum(TagType {
-                is_defined: false,
-                name: Some(tag_type_name),
-                members: vec![],
-            }),
-
-            _ => unreachable!(),
-        };
+        let declared_tag_type = GlobalNode::TagType(TagTypeData {
+            kind: keyword.into(),
+            is_defined: false,
+            name: Some(tag_type_name),
+            members: vec![],
+        });
 
         self.lexer.expect(|x| matches!(x, TokenTypes::Semicolon))?;
 
@@ -233,16 +305,15 @@ impl Parser {
 
     pub fn get_nested_member_if_some(&mut self) -> Result<Option<Vec<GlobalNode>>, String> {
         let mut items = Vec::new();
-        // disgusting but there really is not a better option
-        if self.is_tag_type_keyword(&KeywordTypes::Struct)? {
-            items.extend(self.parse_struct_keyword()?);
-        } else if self.is_tag_type_keyword(&KeywordTypes::Union)? {
-            items.extend(self.parse_union_keyword()?);
-        } else if self.is_tag_type_keyword(&KeywordTypes::Enum)? {
-            items.extend(self.parse_enum_keyword()?);
-        } else {
-            return Ok(None);
-        }
+        items.extend(match self.is_tag_type_keyword()? {
+            Some(value) => match value {
+                TagTypeKind::Struct => self.parse_struct_keyword()?,
+                TagTypeKind::Union => self.parse_union_keyword()?,
+                TagTypeKind::Enum => self.parse_enum_keyword()?,
+            },
+
+            None => return Ok(None),
+        });
 
         Ok(Some(items))
     }
@@ -269,9 +340,9 @@ impl Parser {
     /// Parses the indentifiers after a variable
     /// This exists because a variable can define multiple different vars using the comma operator
     /// (e.g. int x = 10, y = 20, z;) where the funtion runs after the int x = 10 is parsed
-    pub fn parse_vars_after_type<const IS_STRUCT: bool>(
+    pub fn parse_vars_after_type<const IS_TAG_TYPE: bool>(
         &mut self,
-        struct_type: &TypeNode,
+        original_as_type_node: &TypeNode,
     ) -> Result<Vec<GlobalNode>, String> {
         let mut var_type;
         let mut all_vars = Vec::new();
@@ -283,13 +354,13 @@ impl Parser {
 
             // a struct extra vars don't have to start after a comma, it just starts after the right curly brace
             // or after the qulifiers after the left curly brace
-            if IS_STRUCT && i == 0 && Self::token_is_variable_type(&next_token) {
-                var_type = self.update_var(&struct_type)?;
+            if IS_TAG_TYPE && i == 0 && Self::token_is_variable_type(&next_token) {
+                var_type = self.update_var(&original_as_type_node)?;
             }
             // Could be another variable assigned after the original one
             else if matches!(next_token, TokenTypes::Operator(OperatorTypes::Comma)) {
                 self.lexer.advance();
-                var_type = self.update_var(&struct_type)?;
+                var_type = self.update_var(&original_as_type_node)?;
             } else if matches!(next_token, TokenTypes::Semicolon) {
                 break;
             } else {
@@ -335,13 +406,13 @@ impl Parser {
     /// Parses struct or union definitions
     /// These include stuct with a left and right curly brace that may or may not include members
     /// This does not account for variables defined subsequently with the struct
-    pub fn parse_struct_or_union_definition<F, T>(
+    pub fn parse_struct_or_union_definition<F>(
         &mut self,
+        tag_type_kind: TagTypeKind,
         parse_member: F,
-    ) -> Result<GlobalNode, String>
+    ) -> Result<TagTypeData, String>
     where
-        F: Fn(&mut Parser) -> Result<Vec<T>, String>,
-        TagType<T>: ToGlobal,
+        F: Fn(&mut Parser) -> Result<Vec<TagTypeMember>, String>,
     {
         self.lexer.advance(); // move past the struct
 
@@ -370,13 +441,14 @@ impl Parser {
 
         self.lexer.advance();
 
-        let final_struct_or_union = TagType {
+        let final_struct_or_union = TagTypeData {
+            kind: tag_type_kind,
             is_defined: true,
             name: name.clone(),
             members,
         };
 
-        Ok(final_struct_or_union.to_global())
+        Ok(final_struct_or_union)
     }
 
     pub fn parse_tag_type_definition_and_vars<F>(
@@ -384,41 +456,50 @@ impl Parser {
         parse_definition: F,
     ) -> Result<Vec<GlobalNode>, String>
     where
-        F: FnOnce(&mut Parser) -> Result<GlobalNode, String>,
+        F: FnOnce(&mut Parser) -> Result<TagTypeData, String>,
     {
-        let mut enum_and_vars = Vec::new();
+        let mut tag_type_and_vars = Vec::new();
 
         let mut var_qualifiers = self.parse_tag_type_qualifiers()?;
 
-        let defined_enum = parse_definition(self)?;
-
-        enum_and_vars.push(defined_enum.clone());
+        let mut defined_tag_type = parse_definition(self)?;
 
         var_qualifiers.extend(self.parse_tag_type_qualifiers()?);
 
-        let tag_type_type = match defined_enum {
-            GlobalNode::Enum(data) => TypeNode::Enum {
-                name: data.name.clone(),
-                qualifiers: var_qualifiers,
-            },
+        let generated_new_name = defined_tag_type.name.is_none();
+        if generated_new_name {
+            defined_tag_type.name = Some(self.semantics.generate_new_name());
+        }
 
-            GlobalNode::Struct(data) => TypeNode::Struct {
-                name: data.name,
-                qualifiers: var_qualifiers,
-            },
+        let type_node = defined_tag_type.as_type(&var_qualifiers);
 
-            GlobalNode::Union(data) => TypeNode::Union {
-                name: data.name,
-                qualifiers: var_qualifiers,
-            },
+        let defined_vars: Vec<GlobalNode> = self.parse_vars_after_type::<true>(&type_node)?;
 
-            _ => unreachable!(),
-        };
+        if generated_new_name && defined_vars.is_empty() {
+            return Ok(vec![]);
+        }
 
-        let defined_vars: Vec<GlobalNode> = self.parse_vars_after_type::<true>(&tag_type_type)?;
+        let storage_class_specifiers: Vec<DataTypes> = var_qualifiers
+            .iter()
+            .filter(|x| x.is_storage_specifier())
+            .map(|x| *x)
+            .collect();
 
-        enum_and_vars.extend(defined_vars);
+        if storage_class_specifiers.len() > 1 {
+            return Err(String::from(
+                "Disallowed tag type storage class specifier combination",
+            ));
+        }
 
-        return Ok(enum_and_vars);
+        if storage_class_specifiers.contains(&DataTypes::Typedef) {
+            for typedef in defined_vars {}
+
+            return Ok(vec![]);
+        } else {
+            tag_type_and_vars.push(GlobalNode::TagType(defined_tag_type));
+            tag_type_and_vars.extend(defined_vars);
+        }
+
+        return Ok(tag_type_and_vars);
     }
 }

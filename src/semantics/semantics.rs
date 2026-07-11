@@ -1,9 +1,6 @@
 use std::collections::HashMap;
-use std::sync::atomic::AtomicU32;
 
 use crate::parser::type_parser::TypeNode;
-
-static ANONYMOUS_ID: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum IdentifierType {
@@ -30,19 +27,24 @@ enum LabelType {
     Default,
 }
 
-#[derive(Default, Debug)]
 struct SymbolTable {
+    // holds either tag types or types
+    // type_id_table: HashMap<u32, >
+}
+
+#[derive(Default, Debug)]
+struct ScopeTable {
     pub identifiers: HashMap<String, IdentifierType>,
     // pub tags: HashMap<String, TagType>,
     // pub members: HashMap<String, MemberType>,
     // pub labels: HashMap<String, LabelType>,
     curr_depth: usize,
-    next_tables: Vec<SymbolTable>,
+    next_tables: Vec<ScopeTable>,
 }
 
-impl SymbolTable {
+impl ScopeTable {
     pub fn new(depth: usize) -> Self {
-        let mut symbol_table = SymbolTable::default();
+        let mut symbol_table = ScopeTable::default();
         symbol_table.curr_depth = depth;
         symbol_table
     }
@@ -101,14 +103,22 @@ impl SymbolTable {
 
 #[derive(Default, Debug)]
 pub struct Semantics {
-    full_symbol_table: SymbolTable,
+    full_scope_table: ScopeTable,
     curr_depth: usize,
+    anonymous_id: u32,
 }
 
 impl Semantics {
+    pub fn generate_new_name(&mut self) -> String {
+        // dashes are used to differentiate between user defined variables / tag types and compiler defined tag types
+        let name = format!("Anon-TagType-{}", self.anonymous_id);
+        self.anonymous_id += 1;
+        name
+    }
+
     pub fn push_scope(&mut self) {
         self.curr_depth += 1;
-        self.full_symbol_table.add_scope(self.curr_depth);
+        self.full_scope_table.add_scope(self.curr_depth);
     }
 
     pub fn leave_scope(&mut self) {
@@ -116,7 +126,7 @@ impl Semantics {
     }
 
     pub fn check_identifier(&self, identifier: &str) -> Option<IdentifierType> {
-        self.full_symbol_table
+        self.full_scope_table
             .get_identifiers(self.curr_depth, identifier, None)
     }
 
@@ -125,7 +135,7 @@ impl Semantics {
         name: &str,
         identifier_type: &IdentifierType,
     ) -> Result<(), String> {
-        let curr_scope = self.full_symbol_table.enter_scope(self.curr_depth);
+        let curr_scope = self.full_scope_table.enter_scope(self.curr_depth);
         let identifiers = &mut curr_scope.identifiers;
 
         if identifiers.contains_key(name) {

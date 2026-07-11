@@ -2,39 +2,15 @@ use crate::lexer::language_features::AssignmentTypes;
 use crate::lexer::language_features::KeywordTypes;
 use crate::lexer::language_features::OperatorTypes;
 use crate::lexer::lexer::TokenTypes;
-use crate::parser::expression_parser::ExprNode;
-use crate::parser::helper::pretty_clean_string;
 use crate::parser::nodes::GlobalNode;
 use crate::parser::parser::Parser;
 use crate::parser::tag_types::helper::TagKeywordUsage;
-use crate::parser::tag_types::helper::TagType;
+use crate::parser::tag_types::helper::TagTypeData;
+use crate::parser::tag_types::helper::TagTypeKind;
 use crate::parser::tag_types::helper::TagTypeMember;
 
-#[derive(Clone)]
-pub struct EnumMember {
-    pub name: String,
-    pub value: Option<ExprNode>,
-}
-
-impl TagTypeMember for EnumMember {
-    fn display_member(&self, indentation: usize) -> String {
-        let indent_str = " ".repeat(indentation);
-        let mut output = format!("{indent_str}(Member (Name {})", self.name);
-
-        if let Some(enum_value) = &self.value {
-            output.push_str(&format!(
-                " (Value {})",
-                pretty_clean_string(&enum_value.to_string())
-            ));
-        }
-
-        output.push(')');
-        output
-    }
-}
-
 impl Parser {
-    fn parse_enum_members(&mut self) -> Result<Vec<EnumMember>, String> {
+    fn parse_enum_members(&mut self) -> Result<Vec<TagTypeMember>, String> {
         let mut all_members = Vec::new();
         while let Some(token) = self.lexer.peek()
             && !matches!(token, TokenTypes::RCurlyBrace)
@@ -60,7 +36,7 @@ impl Parser {
                 enum_value = Some(self.parse_expression(3)?);
             }
 
-            all_members.push(EnumMember {
+            all_members.push(TagTypeMember::EnumMember {
                 name: enum_name,
                 value: enum_value,
             });
@@ -87,7 +63,7 @@ impl Parser {
         Ok(all_members)
     }
 
-    pub fn parse_enum_definition(&mut self) -> Result<GlobalNode, String> {
+    pub fn parse_enum_definition(&mut self) -> Result<TagTypeData, String> {
         self.lexer.advance();
 
         let name = match self.lexer.peek() {
@@ -99,7 +75,6 @@ impl Parser {
         };
 
         self.lexer.advance();
-
         let members = self.parse_enum_members()?;
 
         if members.len() == 0 {
@@ -108,11 +83,12 @@ impl Parser {
             ));
         }
 
-        Ok(GlobalNode::Enum(TagType {
+        Ok(TagTypeData {
+            kind: TagTypeKind::Enum,
             name,
             members,
             is_defined: true,
-        }))
+        })
     }
 
     pub fn parse_enum_keyword(&mut self) -> Result<Vec<GlobalNode>, String> {
@@ -122,7 +98,6 @@ impl Parser {
         }
 
         if matches!(usage, TagKeywordUsage::Definition) {
-            // problem here
             return self.parse_tag_type_definition_and_vars(Self::parse_enum_definition);
         }
 
@@ -146,9 +121,9 @@ mod tests {
                 " enum Color {RED, GREEN, BLUE}; ",
                 "
                 (Enum Color (Members
-                    (Member (Name RED))
-                    (Member (Name GREEN))
-                    (Member (Name BLUE))
+                    (Member RED)
+                    (Member GREEN)
+                    (Member BLUE)
                 ))
                 ",
             ),
@@ -157,9 +132,9 @@ mod tests {
                 "enum Color { RED, GREEN, BLUE} c;",
                 "
                 (Enum Color (Members
-                    (Member (Name RED))
-                    (Member (Name GREEN))
-                    (Member (Name BLUE))
+                    (Member RED)
+                    (Member GREEN)
+                    (Member BLUE)
                 ))
                 (Variable (Name c (Enum Color)))
                 ",
@@ -168,9 +143,9 @@ mod tests {
                 "enum Numbers { ZERO = 0, ONE = 1, TWO = 2};",
                 "
                 (Enum Numbers (Members
-                    (Member (Name ZERO) (Value (Num 0)))
-                    (Member (Name ONE) (Value (Num 1)))
-                    (Member (Name TWO) (Value (Num 2)))
+                    (Member ZERO (Value (Num 0)))
+                    (Member ONE (Value (Num 1)))
+                    (Member TWO (Value (Num 2)))
                 ))
                 ",
             ),
@@ -178,9 +153,9 @@ mod tests {
                 "enum SignedValues {NEG = -1,ZERO = 0,POS = 1};",
                 "
                 (Enum SignedValues (Members
-                    (Member (Name NEG) (Value (Unary (Op -) (Num 1))))
-                    (Member (Name ZERO) (Value (Num 0)))
-                    (Member (Name POS) (Value (Num 1)))
+                    (Member NEG (Value (Unary (Op -) (Num 1))))
+                    (Member ZERO (Value (Num 0)))
+                    (Member POS (Value (Num 1)))
                 ))
                 ",
             ),
@@ -188,33 +163,21 @@ mod tests {
                 "enum Expr {A = 1 + 2, B = A * 4, C = (B << 1)}; ",
                 "
                 (Enum Expr (Members
-                    (Member (Name A) (Value
-                        (Binary (Num 1) (Op +) (Num 2))))
-                    (Member (Name B) (Value
-                        (Binary (Var A) (Op *) (Num 4))))
-                    (Member (Name C) (Value
-                        (Binary (Var B) (Op <<) (Num 1))))
+                    (Member A (Value (Binary (Num 1) (Op +) (Num 2))))
+                    (Member B (Value (Binary (Var A) (Op *) (Num 4))))
+                    (Member C (Value (Binary (Var B) (Op <<) (Num 1))))
                 ))
                 ",
             ),
-            (
-                "enum {A,B,C};",
-                "
-                (Enum (Members
-                    (Member (Name A))
-                    (Member (Name B))
-                    (Member (Name C))
-                ))
-                ",
-            ),
+            ("enum {A,B,C};", ""), // should be empty as it doesnt define anything
             ("enum Color;", "(Enum Color)"),
             (
                 " enum Color {RED, GREEN, BLUE, }; ",
                 "
                 (Enum Color (Members
-                    (Member (Name RED))
-                    (Member (Name GREEN))
-                    (Member (Name BLUE))
+                    (Member RED)
+                    (Member GREEN)
+                    (Member BLUE)
                 ))
                 ",
             ),

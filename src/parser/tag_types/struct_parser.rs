@@ -3,73 +3,24 @@ use crate::lexer::language_features::{KeywordTypes, LiteralTypes};
 use crate::lexer::lexer::TokenTypes;
 use crate::parser::nodes::GlobalNode;
 use crate::parser::parser::Parser;
-use crate::parser::tag_types::enum_parser::EnumMember;
-use crate::parser::tag_types::helper::TagKeywordUsage;
-use crate::parser::tag_types::helper::TagType;
-use crate::parser::tag_types::helper::TagTypeMember;
-use crate::parser::tag_types::union_parser::UnionMember;
-use crate::parser::type_parser::TypeNode;
-
-#[derive(Clone)]
-pub enum StructMember {
-    NormalType {
-        item_type: TypeNode,
-        bit_field: Option<u64>,
-    },
-    DefinedStruct(TagType<StructMember>),
-    DefinedEnum(TagType<EnumMember>),
-    DefinedUnion(TagType<UnionMember>),
-}
-
-impl TagTypeMember for StructMember {
-    fn display_member(&self, indentation: usize) -> String {
-        let mut output = String::new();
-        let indent_str = " ".repeat(indentation);
-
-        match self {
-            StructMember::NormalType {
-                item_type,
-                bit_field,
-            } => {
-                output += &format!("{indent_str}(Member {}", item_type);
-
-                if let Some(bitfield) = bit_field {
-                    output.push_str(&format!("(Bitfield {})", bitfield.to_string()));
-                }
-            }
-
-            StructMember::DefinedStruct(data) => {
-                output += &data.display(indentation + 2);
-            }
-
-            StructMember::DefinedEnum(data) => {
-                output += &data.display(indentation + 2);
-            }
-
-            StructMember::DefinedUnion(data) => {
-                output += &data.display(indentation + 2);
-            }
-        }
-
-        output.push_str(")");
-
-        output
-    }
-}
+use crate::parser::tag_types::helper::TagTypeKind;
+use crate::parser::tag_types::helper::{TagKeywordUsage, TagTypeMember};
 
 impl Parser {
     /// Parses anything that uses a struct keyword
     /// This includes struct definitions, declarations and variables
     pub fn parse_struct_keyword(&mut self) -> Result<Vec<GlobalNode>, String> {
         let usage = self.tag_type_keyword_usage()?;
-
         if matches!(usage, TagKeywordUsage::Variable) {
             return self.parse_variable_statement();
         }
 
         if matches!(usage, TagKeywordUsage::Definition) {
             let parse_definition = |parser: &mut Parser| {
-                return parser.parse_struct_or_union_definition(Self::parse_struct_member);
+                return parser.parse_struct_or_union_definition(
+                    TagTypeKind::Struct,
+                    Self::parse_struct_member,
+                );
             };
             return self.parse_tag_type_definition_and_vars(parse_definition);
         }
@@ -84,7 +35,7 @@ impl Parser {
         unreachable!()
     }
 
-    fn parse_nested_struct_tag_type(&mut self) -> Result<Option<Vec<StructMember>>, String> {
+    fn parse_nested_struct_tag_type(&mut self) -> Result<Option<Vec<TagTypeMember>>, String> {
         let mut all_members = Vec::new();
 
         let Some(items) = self.get_nested_member_if_some()? else {
@@ -93,11 +44,9 @@ impl Parser {
 
         for item in items {
             let member = match item {
-                GlobalNode::Struct(data) => StructMember::DefinedStruct(data),
-                GlobalNode::Enum(data) => StructMember::DefinedEnum(data),
-                GlobalNode::Union(data) => StructMember::DefinedUnion(data),
+                GlobalNode::TagType(data) => TagTypeMember::TagType(data),
 
-                GlobalNode::Initalizer { var_type, .. } => StructMember::NormalType {
+                GlobalNode::Initalizer { var_type, .. } => TagTypeMember::StructMember {
                     item_type: var_type,
                     bit_field: None,
                 },
@@ -111,7 +60,7 @@ impl Parser {
         Ok(Some(all_members))
     }
 
-    fn parse_struct_member(&mut self) -> Result<Vec<StructMember>, String> {
+    fn parse_struct_member(&mut self) -> Result<Vec<TagTypeMember>, String> {
         if let Some(nested_members) = self.parse_nested_struct_tag_type()? {
             return Ok(nested_members);
         }
@@ -143,7 +92,7 @@ impl Parser {
 
         self.lexer.expect(|x| matches!(x, TokenTypes::Semicolon))?;
 
-        let final_member = StructMember::NormalType {
+        let final_member = TagTypeMember::StructMember {
             item_type: member,
             bit_field,
         };
@@ -161,7 +110,7 @@ mod tests {
             ("struct Point;", "(Struct Point)"),
             ("const struct Point;", "(Struct Point)"),
             ("struct Point const;", "(Struct Point)"),
-            ("struct {};", "(Struct (Members))"),
+            ("struct {};", ""), // should be empty, ignored by the ast
             ("struct Point{};", "(Struct Point (Members))"),
             (
                 "struct Point{int x; int y;};",
@@ -170,13 +119,7 @@ mod tests {
                   (Member (Name y (Type int)))
                 ))",
             ),
-            (
-                "struct {int x; int y;};",
-                "(Struct (Members
-                  (Member (Name x (Type int)))
-                  (Member (Name y (Type int)))
-                ))",
-            ),
+            ("struct {int x; int y;};", ""),
             (
                 "struct Point{int x : 3; int y : 2;};",
                 "(Struct Point (Members
@@ -453,7 +396,7 @@ mod tests {
                 (Struct A (Members
                     (Struct B (Members
                         (Member (Name x (Type int)))
-                    )))
+                    ))
                     (Member (Name b (Struct B)))
                 ))
                     
@@ -472,12 +415,12 @@ mod tests {
                     (Struct B (Members
                         (Struct C (Members
                             (Member (Name x (Type int)))
-                        )))
+                        ))
                         (Member (Name c (Struct C)))
-                      )))
+                      ))
                     (Member (Name b (Struct B)))
                 ))
-                    
+
                 ",
             ),
             (
@@ -488,10 +431,10 @@ mod tests {
                 ",
                 "
                 (Struct A (Members
-                    (Struct (Members
+                    (Struct Anon-TagType-0 (Members
                         (Member (Name x (Type int)))
-                    )))
-                    (Member (Name b (Struct)))
+                    ))
+                    (Member (Name b (Struct Anon-TagType-0)))
                 ))
                 ",
             ),
@@ -500,17 +443,17 @@ mod tests {
                 struct Outer {
                     struct Inner { int x; } i;
                     struct Another { int y; } a;
-                };                    
+                };
                 ",
                 "
                 (Struct Outer (Members
                     (Struct Inner (Members
                         (Member (Name x (Type int)))
-                    )))
+                    ))
                     (Member (Name i (Struct Inner)))
                     (Struct Another (Members
                         (Member (Name y (Type int)))
-                    )))
+                    ))
                     (Member (Name a (Struct Another)))
                 ))
                 ",
@@ -520,38 +463,38 @@ mod tests {
                 struct A {
                     struct B *ptr;
                     struct B { int x; } b;
-                };                    
+                };
                 ",
                 "
                 (Struct A (Members
                     (Member (Name ptr (Ptr (Struct B))))
                     (Struct B (Members
                         (Member (Name x (Type int)))
-                    )))
+                    ))
                     (Member (Name b (Struct B)))
-                ))  
+                ))
                 ",
             ),
             (
                 "
                 struct A {
                     struct { int x; } grid[3][4];
-                };                    
+                };
                 ",
                 "
                 (Struct A (Members
-                    (Struct (Members
+                    (Struct Anon-TagType-0 (Members
                         (Member (Name x (Type int)))
-                    )))
-                    (Member (Name grid (Arr (Num 4) (Arr (Num 3) (Struct)))))
-                ))  
+                    ))
+                    (Member (Name grid (Arr (Num 4) (Arr (Num 3) (Struct Anon-TagType-0)))))
+                ))
                 ",
             ),
             (
                 "struct A{ struct B; int x; };",
                 "
                 (Struct A (Members
-                    (Struct B))
+                    (Struct B)
                     (Member (Name x (Type int)))
                 ))
                 ",

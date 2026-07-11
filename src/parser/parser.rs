@@ -3,6 +3,7 @@ use crate::lexer::language_features::{AssignmentTypes, OperatorTypes};
 use crate::lexer::lexer::{Lexer, TokenTypes};
 use crate::parser::helper::to_statement;
 use crate::parser::nodes::{GlobalNode, Root, StatementNode};
+use crate::parser::tag_types::helper::TagTypeKind;
 use crate::parser::type_parser::TypeNode;
 use crate::semantics::semantics::Semantics;
 
@@ -53,19 +54,15 @@ impl Parser {
     }
 
     fn parse_data_type(&mut self) -> Result<Vec<GlobalNode>, String> {
-        if self.is_tag_type_keyword(&KeywordTypes::Struct)? {
-            return self.parse_struct_keyword();
-        }
+        match self.is_tag_type_keyword()? {
+            Some(value) => match value {
+                TagTypeKind::Struct => self.parse_struct_keyword(),
+                TagTypeKind::Union => self.parse_union_keyword(),
+                TagTypeKind::Enum => self.parse_enum_keyword(),
+            },
 
-        if self.is_tag_type_keyword(&KeywordTypes::Enum)? {
-            return self.parse_enum_keyword();
+            None => self.parse_function_or_var(),
         }
-
-        if self.is_tag_type_keyword(&KeywordTypes::Union)? {
-            return self.parse_union_keyword();
-        }
-
-        Ok(self.parse_function_or_var()?)
     }
 
     fn parse_function_or_var(&mut self) -> Result<Vec<GlobalNode>, String> {
@@ -166,7 +163,6 @@ impl Parser {
     /// Does not support struct parsing
     pub fn parse_variable_statement(&mut self) -> Result<Vec<GlobalNode>, String> {
         let mut var_type = self.parse_type()?;
-
         let next_token = self.lexer.force_peek("Expected end of var, got nothing")?;
         let mut all_vars = vec![];
 

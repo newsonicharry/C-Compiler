@@ -2,6 +2,7 @@ use crate::lexer::language_features::KeywordTypes;
 use crate::lexer::language_features::OperatorTypes;
 use crate::lexer::lexer::TokenTypes;
 use crate::parser::expression_parser::ExprNode;
+use crate::parser::nodes::IndentDisplay;
 use crate::parser::nodes::StatementNode;
 use crate::parser::parser::Parser;
 
@@ -20,11 +21,11 @@ pub enum IfStatement {
     Else(StatementNode),
 }
 
-impl IfStatement {
-    pub fn display(&self, indentation: usize) -> String {
+impl IndentDisplay for IfStatement {
+    fn indent_display(&self, indent: usize) -> String {
         let mut output = String::new();
-        let indent_str = " ".repeat(indentation);
-        let next_indent_str = " ".repeat(indentation + 2);
+        let indent_str = " ".repeat(indent);
+        let next_indent_str = " ".repeat(indent + 2);
 
         match self {
             Self::If { .. } => output.push_str(&format!("{indent_str}(If")),
@@ -45,14 +46,14 @@ impl IfStatement {
             } => {
                 output.push_str(&format!(
                     "\n{next_indent_str}(Condition \n{})\n{next_indent_str}(Body\n{}\n{next_indent_str})",
-                    &conditional.clone().display(indentation + 4),
-                    &body.clone().display(indentation + 4)
+                    &conditional.clone().display(indent + 4),
+                    &body.clone().indent_display(indent + 4)
                 ));
 
                 if let Some(chain) = chain {
                     output.push_str(&format!(
                         "\n{next_indent_str}(Chain\n{}\n{next_indent_str})",
-                        chain.display(indentation + 4)
+                        chain.indent_display(indent + 4)
                     ));
                 }
 
@@ -61,7 +62,7 @@ impl IfStatement {
             Self::Else(body) => {
                 output.push_str(&format!(
                     "\n{next_indent_str}(Body\n{}\n{next_indent_str})",
-                    &body.clone().display(indentation + 4)
+                    &body.clone().indent_display(indent + 4)
                 ));
             }
         }

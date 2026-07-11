@@ -2,49 +2,9 @@ use crate::lexer::language_features::KeywordTypes;
 use crate::lexer::lexer::TokenTypes;
 use crate::parser::nodes::GlobalNode;
 use crate::parser::parser::Parser;
-use crate::parser::tag_types::enum_parser::EnumMember;
 use crate::parser::tag_types::helper::TagKeywordUsage;
-use crate::parser::tag_types::helper::TagType;
+use crate::parser::tag_types::helper::TagTypeKind;
 use crate::parser::tag_types::helper::TagTypeMember;
-use crate::parser::tag_types::struct_parser::StructMember;
-use crate::parser::type_parser::TypeNode;
-
-#[derive(Clone)]
-pub enum UnionMember {
-    NormalType { item_type: TypeNode },
-    DefinedStruct(TagType<StructMember>),
-    DefinedEnum(TagType<EnumMember>),
-    DefinedUnion(TagType<UnionMember>),
-}
-
-impl TagTypeMember for UnionMember {
-    fn display_member(&self, indentation: usize) -> String {
-        let mut output = String::new();
-        let indent_str = " ".repeat(indentation);
-
-        match self {
-            UnionMember::NormalType { item_type } => {
-                output += &format!("{indent_str}(Member {}", item_type);
-            }
-
-            UnionMember::DefinedStruct(data) => {
-                output += &data.display(indentation + 2);
-            }
-
-            UnionMember::DefinedEnum(data) => {
-                output += &data.display(indentation + 2);
-            }
-
-            UnionMember::DefinedUnion(data) => {
-                output += &data.display(indentation + 2);
-            }
-        }
-
-        output.push_str(")");
-
-        output
-    }
-}
 
 impl Parser {
     pub fn parse_union_keyword(&mut self) -> Result<Vec<GlobalNode>, String> {
@@ -53,10 +13,12 @@ impl Parser {
         if matches!(usage, TagKeywordUsage::Variable) {
             return self.parse_variable_statement();
         }
-
         if matches!(usage, TagKeywordUsage::Definition) {
             let parse_definition = |parser: &mut Parser| {
-                return parser.parse_struct_or_union_definition(Self::parse_union_member);
+                return parser.parse_struct_or_union_definition(
+                    TagTypeKind::Union,
+                    Self::parse_union_member,
+                );
             };
             return self.parse_tag_type_definition_and_vars(parse_definition);
         }
@@ -69,7 +31,7 @@ impl Parser {
         unreachable!()
     }
 
-    fn parse_nested_tag_type(&mut self) -> Result<Option<Vec<UnionMember>>, String> {
+    fn parse_nested_tag_type(&mut self) -> Result<Option<Vec<TagTypeMember>>, String> {
         let mut all_members = Vec::new();
 
         let Some(items) = self.get_nested_member_if_some()? else {
@@ -78,11 +40,9 @@ impl Parser {
 
         for item in items {
             let member = match item {
-                GlobalNode::Struct(data) => UnionMember::DefinedStruct(data),
-                GlobalNode::Enum(data) => UnionMember::DefinedEnum(data),
-                GlobalNode::Union(data) => UnionMember::DefinedUnion(data),
+                GlobalNode::TagType(data) => TagTypeMember::TagType(data),
 
-                GlobalNode::Initalizer { var_type, .. } => UnionMember::NormalType {
+                GlobalNode::Initalizer { var_type, .. } => TagTypeMember::UnionMember {
                     item_type: var_type,
                 },
 
@@ -95,7 +55,7 @@ impl Parser {
         Ok(Some(all_members))
     }
 
-    fn parse_union_member(&mut self) -> Result<Vec<UnionMember>, String> {
+    fn parse_union_member(&mut self) -> Result<Vec<TagTypeMember>, String> {
         if let Some(nested_members) = self.parse_nested_tag_type()? {
             return Ok(nested_members);
         }
@@ -110,7 +70,7 @@ impl Parser {
 
         self.lexer.expect(|x| matches!(x, TokenTypes::Semicolon))?;
 
-        let final_member = UnionMember::NormalType { item_type: member };
+        let final_member = TagTypeMember::UnionMember { item_type: member };
 
         Ok(vec![final_member])
     }
@@ -138,7 +98,7 @@ mod tests {
                     (Member (Name i (Type int)))
                     (Member (Name f (Type float)))
                 ))
-                (Variable (Name u (Union U)))   
+                (Variable (Name u (Union U)))
                 ",
             ),
             ("union U u;", "(Variable (Name u (Union U))) "),
@@ -146,11 +106,11 @@ mod tests {
             (
                 "union {int i; float f;} u;",
                 "
-                (Union (Members
+                (Union Anon-TagType-0 (Members
                     (Member (Name i (Type int)))
                     (Member (Name f (Type float)))
                 ))
-                (Variable (Name u (Union)))   
+                (Variable (Name u (Union Anon-TagType-0)))
                 ",
             ),
             (
@@ -167,12 +127,12 @@ mod tests {
                 "
                 (Union Outer (Members
                     (Member (Name tag (Type int)))
-                    (Union (Members
+                    (Union Anon-TagType-0 (Members
                       (Member (Name i (Type int)))
                       (Member (Name f (Type float)))
-                    )))
-                    (Member (Name data (Union)))
-                ))   
+                    ))
+                    (Member (Name data (Union Anon-TagType-0)))
+                ))
                 ",
             ),
             (
@@ -184,13 +144,13 @@ mod tests {
                 ",
                 "
                 (Union U (Members
-                    (Struct (Members
+                    (Struct Anon-TagType-0 (Members
                         (Member (Name x (Type int)))
                         (Member (Name y (Type int)))
-                    )))
-                    (Member (Name point (Struct)))
+                    ))
+                    (Member (Name point (Struct Anon-TagType-0)))
                     (Member (Name raw (Arr (Num 2) (Type int))))
-                ))  
+                ))
                 ",
             ),
             (
@@ -203,12 +163,12 @@ mod tests {
                 "
                 (Struct S (Members
                     (Member (Name tag (Type int)))
-                    (Union (Members
+                    (Union Anon-TagType-0 (Members
                         (Member (Name i (Type int)))
                         (Member (Name f (Type float)))
-                    )))
-                    (Member (Name value (Union)))
-                ))  
+                    ))
+                    (Member (Name value (Union Anon-TagType-0)))
+                ))
                 ",
             ),
             (
@@ -216,7 +176,7 @@ mod tests {
                 "
                 (Variable (Name u (Union U))
                     (AggInit
-                        (InitElement (Expr (Num 42)))))                    
+                        (InitElement (Expr (Num 42)))))
             ",
             ),
         ];
