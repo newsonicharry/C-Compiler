@@ -5,19 +5,23 @@ use crate::parser::helper::pretty_clean_string;
 use crate::parser::nodes::{GlobalNode, IndentDisplay};
 use crate::parser::parser::Parser;
 use crate::parser::type_parser::TypeNode;
+use crate::semantics::semantics::SemanticInfo;
 
 #[derive(Clone)]
 pub enum TagTypeMember {
     StructMember {
         item_type: TypeNode,
         bit_field: Option<u64>,
+        semantic_info: SemanticInfo,
     },
     UnionMember {
         item_type: TypeNode,
+        semantic_info: SemanticInfo,
     },
     EnumMember {
         name: String,
         value: Option<ExprNode>,
+        semantic_info: SemanticInfo, // might not have to be given a type id
     },
     TagType(TagTypeData),
 }
@@ -38,6 +42,7 @@ impl TagTypeMember {
         let Self::StructMember {
             item_type,
             bit_field,
+            ..
         } = self
         else {
             unreachable!()
@@ -58,7 +63,7 @@ impl TagTypeMember {
     }
 
     fn union_display_helper(&self, indent: usize) -> String {
-        let Self::UnionMember { item_type } = self else {
+        let Self::UnionMember { item_type, .. } = self else {
             unreachable!()
         };
 
@@ -67,7 +72,7 @@ impl TagTypeMember {
     }
 
     fn enum_display_helper(&self, indent: usize) -> String {
-        let Self::EnumMember { name, value } = self else {
+        let Self::EnumMember { name, value, .. } = self else {
             unreachable!()
         };
 
@@ -110,6 +115,7 @@ pub struct TagTypeData {
     pub is_defined: bool,
     pub name: Option<String>,
     pub members: Vec<TagTypeMember>,
+    pub semantic_info: SemanticInfo,
 }
 
 impl TagTypeData {
@@ -177,7 +183,18 @@ impl Parser {
     fn parse_tag_type_qualifiers(&mut self) -> Result<Vec<DataTypes>, String> {
         let mut qualifiers = Vec::new();
         while let Some(TokenTypes::DataType(data_type)) = self.lexer.peek() {
-            if data_type.is_qualifier() || data_type.is_storage_specifier() {
+            if ({
+                let this = &data_type;
+                match *this {
+                    //  auto is not technically a qualifier but we assume it is here
+                    DataTypes::Const
+                    | DataTypes::Volatile
+                    | DataTypes::Restrict
+                    | DataTypes::Auto => true,
+                    _ => false,
+                }
+            }) || data_type.is_storage_specifier()
+            {
                 qualifiers.push(data_type);
                 self.lexer.advance();
                 continue;
@@ -296,6 +313,7 @@ impl Parser {
             is_defined: false,
             name: Some(tag_type_name),
             members: vec![],
+            semantic_info: SemanticInfo::default(),
         });
 
         self.lexer.expect(|x| matches!(x, TokenTypes::Semicolon))?;
@@ -385,6 +403,7 @@ impl Parser {
                 final_var = GlobalNode::Initalizer {
                     var_type: var_type.clone(),
                     r_value: Some(self.parse_expression(3)?),
+                    semantic_info: SemanticInfo::default(),
                 };
             }
             // its a declaration
@@ -392,6 +411,7 @@ impl Parser {
                 final_var = GlobalNode::Initalizer {
                     var_type: var_type.clone(),
                     r_value: None,
+                    semantic_info: SemanticInfo::default(),
                 };
             }
 
@@ -446,6 +466,7 @@ impl Parser {
             is_defined: true,
             name: name.clone(),
             members,
+            semantic_info: SemanticInfo::default(),
         };
 
         Ok(final_struct_or_union)

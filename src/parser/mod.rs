@@ -3,7 +3,7 @@ pub mod aggregate_init;
 pub mod expression_parser;
 pub mod helper;
 mod if_statement;
-mod jump_label;
+pub mod jump_label;
 pub mod nodes;
 mod statement_keywords;
 pub mod tag_types;

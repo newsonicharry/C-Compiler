@@ -5,6 +5,7 @@ use crate::parser::nodes::GlobalNode;
 use crate::parser::parser::Parser;
 use crate::parser::tag_types::helper::TagTypeKind;
 use crate::parser::tag_types::helper::{TagKeywordUsage, TagTypeMember};
+use crate::semantics::semantics::SemanticInfo;
 
 impl Parser {
     /// Parses anything that uses a struct keyword
@@ -45,10 +46,10 @@ impl Parser {
         for item in items {
             let member = match item {
                 GlobalNode::TagType(data) => TagTypeMember::TagType(data),
-
                 GlobalNode::Initalizer { var_type, .. } => TagTypeMember::StructMember {
                     item_type: var_type,
                     bit_field: None,
+                    semantic_info: SemanticInfo::default(),
                 },
 
                 _ => unreachable!(),
@@ -95,6 +96,7 @@ impl Parser {
         let final_member = TagTypeMember::StructMember {
             item_type: member,
             bit_field,
+            semantic_info: SemanticInfo::default(),
         };
 
         Ok(vec![final_member])

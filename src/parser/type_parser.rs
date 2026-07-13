@@ -4,7 +4,6 @@ use crate::parser::expression_parser::ExprNode;
 use crate::parser::helper::verify_next_in_comma_list;
 use crate::parser::parser::Parser;
 use crate::parser::tag_types::helper::TagTypeKind;
-use crate::semantics::semantics::IdentifierType;
 use std::fmt::Display;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -384,14 +383,12 @@ impl Parser {
                     }
 
                     // if the identifier is a typedef we want to use it as if it is a normal type
-                    if let Some(identifier_type) = self.semantics.check_identifier(&identifier)
+                    if let Some(type_node) = self.semantics.check_typedef(&identifier)
                         && original_type.is_none()
                     {
-                        if let IdentifierType::Typedef(type_node) = identifier_type {
-                            original_type = Some(type_node);
-                            self.lexer.advance();
-                            continue;
-                        };
+                        original_type = Some(type_node.clone());
+                        self.lexer.advance();
+                        continue;
                     }
 
                     if !Self::is_valid_var_name(&identifier) {
@@ -579,9 +576,7 @@ impl Parser {
         if let Some(TokenTypes::Identifier(identifier)) = self.lexer.peek()
             && base_type == DataTypes::NoType
         {
-            if let Some(IdentifierType::Typedef(typedef_type)) =
-                self.semantics.check_identifier(&identifier)
-            {
+            if let Some(typedef_type) = self.semantics.check_typedef(&identifier).cloned() {
                 let TypeNode::Normal {
                     held_type: mut typedef_simple_type,
                     held_value: typedef_held_value,

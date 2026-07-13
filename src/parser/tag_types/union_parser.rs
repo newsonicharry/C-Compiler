@@ -5,6 +5,7 @@ use crate::parser::parser::Parser;
 use crate::parser::tag_types::helper::TagKeywordUsage;
 use crate::parser::tag_types::helper::TagTypeKind;
 use crate::parser::tag_types::helper::TagTypeMember;
+use crate::semantics::semantics::SemanticInfo;
 
 impl Parser {
     pub fn parse_union_keyword(&mut self) -> Result<Vec<GlobalNode>, String> {
@@ -44,6 +45,7 @@ impl Parser {
 
                 GlobalNode::Initalizer { var_type, .. } => TagTypeMember::UnionMember {
                     item_type: var_type,
+                    semantic_info: SemanticInfo::default(),
                 },
 
                 _ => unreachable!(),
@@ -70,7 +72,10 @@ impl Parser {
 
         self.lexer.expect(|x| matches!(x, TokenTypes::Semicolon))?;
 
-        let final_member = TagTypeMember::UnionMember { item_type: member };
+        let final_member = TagTypeMember::UnionMember {
+            item_type: member,
+            semantic_info: SemanticInfo::default(),
+        };
 
         Ok(vec![final_member])
     }

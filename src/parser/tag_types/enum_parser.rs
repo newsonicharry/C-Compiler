@@ -8,6 +8,7 @@ use crate::parser::tag_types::helper::TagKeywordUsage;
 use crate::parser::tag_types::helper::TagTypeData;
 use crate::parser::tag_types::helper::TagTypeKind;
 use crate::parser::tag_types::helper::TagTypeMember;
+use crate::semantics::semantics::SemanticInfo;
 
 impl Parser {
     fn parse_enum_members(&mut self) -> Result<Vec<TagTypeMember>, String> {
@@ -35,10 +36,10 @@ impl Parser {
                 self.lexer.advance();
                 enum_value = Some(self.parse_expression(3)?);
             }
-
             all_members.push(TagTypeMember::EnumMember {
                 name: enum_name,
                 value: enum_value,
+                semantic_info: SemanticInfo::default(),
             });
 
             let next_token = self.lexer.force_peek("Unexpected end to enum")?;
@@ -88,6 +89,7 @@ impl Parser {
             name,
             members,
             is_defined: true,
+            semantic_info: SemanticInfo::default(),
         })
     }
 

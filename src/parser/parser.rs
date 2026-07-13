@@ -5,7 +5,7 @@ use crate::parser::helper::to_statement;
 use crate::parser::nodes::{GlobalNode, Root, StatementNode};
 use crate::parser::tag_types::helper::TagTypeKind;
 use crate::parser::type_parser::TypeNode;
-use crate::semantics::semantics::Semantics;
+use crate::semantics::semantics::{SemanticInfo, Semantics};
 
 pub struct Parser {
     pub lexer: Lexer,
@@ -33,7 +33,7 @@ impl Parser {
                 },
 
                 TokenTypes::Identifier(identifier) => {
-                    if self.semantics.check_identifier(&identifier).is_some() {
+                    if self.semantics.check_typedef(&identifier).is_some() {
                         root.0.extend(self.parse_data_type()?);
                     }
                 }
@@ -87,10 +87,10 @@ impl Parser {
 
         if matches!(next_token, TokenTypes::Semicolon) {
             self.lexer.advance();
-
             let function = GlobalNode::Function {
                 signature: Box::new(signature.clone()),
                 body: None,
+                semantic_info: SemanticInfo::default(),
             };
 
             // functions can be typedefed
@@ -108,6 +108,7 @@ impl Parser {
         let function = GlobalNode::Function {
             signature: Box::new(signature.clone()),
             body: Some(body),
+            semantic_info: SemanticInfo::default(),
         };
 
         // let an error propagate if the final function is a typedef
@@ -120,7 +121,7 @@ impl Parser {
     /// Parses the statements within a block
     /// This includes anything between a left and right curly brace that is not attached to a tag type
     pub fn parse_block(&mut self) -> Result<StatementNode, String> {
-        self.semantics.push_scope();
+        self.semantics.enter_scope();
 
         let mut block = Vec::new();
         while let Some(token) = self.lexer.peek()
@@ -171,12 +172,11 @@ impl Parser {
             let final_var = GlobalNode::Initalizer {
                 var_type: var_type.clone(),
                 r_value: None,
+                semantic_info: SemanticInfo::default(),
             };
             if self.is_typedef_analysis(&final_var)? {
                 return Ok(vec![]);
             }
-
-            self.semantics.add_variable(&var_type)?;
 
             return Ok(vec![final_var]);
         } else if matches!(
@@ -188,6 +188,7 @@ impl Parser {
             let first_var = GlobalNode::Initalizer {
                 var_type: var_type.clone(),
                 r_value: Some(self.parse_expression(3)?),
+                semantic_info: SemanticInfo::default(),
             };
 
             all_vars.push(first_var);
@@ -195,6 +196,7 @@ impl Parser {
             let first_var = GlobalNode::Initalizer {
                 var_type: var_type.clone(),
                 r_value: None,
+                semantic_info: SemanticInfo::default(),
             };
 
             all_vars.push(first_var);
@@ -222,7 +224,6 @@ impl Parser {
             let GlobalNode::Initalizer { var_type, .. } = var else {
                 unreachable!();
             };
-            self.semantics.add_variable(var_type)?;
         }
 
         // we don't add typedefs to the ast

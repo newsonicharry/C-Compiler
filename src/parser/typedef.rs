@@ -1,7 +1,8 @@
 use crate::parser::nodes::GlobalNode;
 use crate::parser::parser::Parser;
 use crate::parser::type_parser::TypeNode;
-use crate::semantics::semantics::IdentifierType;
+use crate::semantics::semantics::SymbolKind;
+use crate::semantics::semantics::TypeTableValue;
 
 impl Parser {
     /// returns a boolean on whether a given global node is a typedef
@@ -19,6 +20,7 @@ impl Parser {
         let GlobalNode::Function {
             mut signature,
             body,
+            ..
         } = node.clone()
         else {
             unreachable!()
@@ -36,13 +38,18 @@ impl Parser {
 
         signature.remove_typedef_property();
 
-        self.semantics.add_typedef(&signature);
+        todo!();
+        // self.semantics
+        //     .add_identifier(&TypeTableValue::Identifier(signature), SymbolKind::Typedef);
 
         Ok(true)
     }
 
     fn initalizer_typedef_analysis(&mut self, node: &GlobalNode) -> Result<bool, String> {
-        let GlobalNode::Initalizer { var_type, r_value } = node else {
+        let GlobalNode::Initalizer {
+            var_type, r_value, ..
+        } = node
+        else {
             unreachable!()
         };
         let is_typedef = var_type.is_typedef();
@@ -67,19 +74,25 @@ impl Parser {
         // the value the semantics uses is only the raw type, without the original typedef property
         // or the orginial variable name
         held_value.remove_typedef_property();
-        let semantics_type = IdentifierType::Typedef(*held_value.clone());
+        self.semantics.add_identifier(
+            &name,
+            &TypeTableValue::Identifier(held_value),
+            SymbolKind::Typedef,
+        );
 
-        // if theres already a typedef in the same scope with the same name and same value its not an error
-        // otherwise is a redefinition
-        if let Err(_) = self.semantics.add_identifier_symbol(&name, &semantics_type) {
-            let Some(found_type) = self.semantics.check_identifier(&name) else {
-                unreachable!()
-            };
+        // let semantics_type = IdentifierType::Typedef(*held_value.clone());
 
-            if found_type != semantics_type {
-                return Err(String::from("Unexpected reduplication of typedef"));
-            }
-        }
+        // // if theres already a typedef in the same scope with the same name and same value its not an error
+        // // otherwise is a redefinition
+        // if let Err(_) = self.semantics.add_identifier_symbol(&name, &semantics_type) {
+        //     let Some(found_type) = self.semantics.check_identifier(&name) else {
+        //         unreachable!()
+        //     };
+
+        //     if found_type != semantics_type {
+        //         return Err(String::from("Unexpected reduplication of typedef"));
+        //     }
+        // }
 
         Ok(true)
     }

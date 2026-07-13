@@ -4,6 +4,7 @@ use crate::parser::if_statement::IfStatement;
 use crate::parser::jump_label::JumpLabel;
 use crate::parser::tag_types::helper::TagTypeData;
 use crate::parser::type_parser::TypeNode;
+use crate::semantics::semantics::SemanticInfo;
 use std::fmt::Display;
 
 pub trait IndentDisplay {
@@ -33,11 +34,13 @@ pub enum GlobalNode {
     Function {
         signature: Box<TypeNode>,
         body: Option<StatementNode>,
+        semantic_info: SemanticInfo,
     },
 
     Initalizer {
         var_type: TypeNode,
         r_value: Option<ExprNode>,
+        semantic_info: SemanticInfo,
     },
 
     TagType(TagTypeData),
@@ -46,7 +49,6 @@ pub enum GlobalNode {
 impl Display for GlobalNode {
     fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let final_str = self.indent_display(0);
-
         write!(display, "{final_str}")
     }
 }
@@ -58,7 +60,9 @@ impl IndentDisplay for GlobalNode {
         let str_indent = " ".repeat(indent);
 
         match self {
-            Self::Function { signature, body } => {
+            Self::Function {
+                signature, body, ..
+            } => {
                 output.push_str(&signature.to_string());
 
                 if let Some(body) = body {
@@ -68,7 +72,9 @@ impl IndentDisplay for GlobalNode {
                 }
             }
 
-            Self::Initalizer { var_type, r_value } => {
+            Self::Initalizer {
+                var_type, r_value, ..
+            } => {
                 output.push_str(&format!("{str_indent}(Variable {var_type}"));
 
                 if let Some(expression) = r_value.clone() {
