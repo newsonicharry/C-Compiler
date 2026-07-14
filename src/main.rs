@@ -14,7 +14,7 @@ fn main() {
     file.read_to_string(&mut program).unwrap();
 
     let lexer = Lexer::new(&program).unwrap();
-
+    // println!("{lexer}");
     let mut parser = Parser::new(&lexer);
     let parsed_program = parser.parse_program();
 

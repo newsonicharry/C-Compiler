@@ -133,7 +133,36 @@ impl Lexer {
         }
     }
 
+    fn parse_ellipsis(chars: &mut Peekable<CharIndices<'_>>) -> Option<TokenTypes> {
+        let mut chars_copy = chars.clone();
+
+        let mut i = 0;
+        while let Some((_, curr_char)) = chars_copy.next()
+            && i < 3
+        {
+            if curr_char != '.' {
+                return None;
+            }
+
+            i += 1;
+        }
+
+        if i < 3 {
+            return None;
+        }
+
+        chars.next();
+        chars.next();
+        chars.next();
+
+        return Some(TokenTypes::Operator(OperatorTypes::Ellipsis));
+    }
+
     fn parse_symbol(chars: &mut Peekable<CharIndices<'_>>) -> TokenTypes {
+        if let Some(ellipsis) = Self::parse_ellipsis(chars) {
+            return ellipsis;
+        }
+
         let mut final_string = String::from("");
         let mut final_type = TokenTypes::NoToken;
 

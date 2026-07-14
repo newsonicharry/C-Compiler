@@ -4,6 +4,7 @@ use crate::parser::expression_parser::ExprNode;
 use crate::parser::helper::verify_next_in_comma_list;
 use crate::parser::parser::Parser;
 use crate::parser::tag_types::helper::TagTypeKind;
+use crate::semantics::semantics::TypeId;
 use std::fmt::Display;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -58,12 +59,14 @@ pub enum TypeNode {
         kind: TagTypeKind,
         name: String,
         qualifiers: Vec<DataTypes>,
+        type_id: Option<TypeId>,
     },
 
     Function {
         name: String,
         return_type: Box<TypeNode>,
         parameters: Vec<TypeNode>,
+        is_variadic: bool,
     },
 }
 
@@ -161,15 +164,13 @@ impl TypeNode {
             _ => return false,
         };
 
-        let Self::Normal {
-            held_type: type_properties,
-            ..
-        } = nested_value.get_most_nested_layer()
-        else {
-            return false;
+        let type_properties = match nested_value.get_most_nested_layer() {
+            Self::Normal { held_type, .. } => &mut held_type.properties,
+            Self::TagType { qualifiers, .. } => qualifiers,
+            _ => return false,
         };
 
-        if type_properties.properties.contains(&DataTypes::Typedef) {
+        if type_properties.contains(&DataTypes::Typedef) {
             return true;
         }
 
@@ -180,20 +181,17 @@ impl TypeNode {
         // at this point its a normal because we've already stripped out the outer part (which is either a variable or a function)
         let final_layer = self.get_most_nested_layer();
 
-        let Self::Normal {
-            held_type: type_properties,
-            ..
-        } = final_layer
-        else {
-            return;
+        let type_properties = match final_layer {
+            Self::Normal { held_type, .. } => &mut held_type.properties,
+            Self::TagType { qualifiers, .. } => qualifiers,
+            _ => return,
         };
 
         if let Some(position) = type_properties
-            .properties
             .iter()
             .position(|x| *x == DataTypes::Typedef)
         {
-            type_properties.properties.remove(position);
+            type_properties.remove(position);
         }
     }
 
@@ -297,6 +295,7 @@ impl TypeNode {
                 kind,
                 name,
                 qualifiers,
+                ..
             } => {
                 match kind {
                     TagTypeKind::Struct => output.push_str(&format!("(Struct")),
@@ -311,6 +310,7 @@ impl TypeNode {
                 name,
                 return_type,
                 parameters,
+                is_variadic,
             } => {
                 output.push_str(&format!(
                     "(Function {name} (Return {})",
@@ -322,6 +322,11 @@ impl TypeNode {
                     for parameter in parameters {
                         output.push_str(&format!(" {}", parameter));
                     }
+
+                    if *is_variadic {
+                        output.push_str(" (Variadic)");
+                    }
+
                     output.push(')');
                 }
 
@@ -371,12 +376,13 @@ impl Parser {
                         self.lexer.advance(); // moves past the identifier
                         self.lexer.advance(); // moves past the left parenthesis
 
-                        let params = self.parse_parameter_list()?;
+                        let (params, is_variadic) = self.parse_parameter_list()?;
 
                         final_type = TypeNode::Function {
                             name: identifier,
                             return_type: Box::new(TypeNode::Empty),
                             parameters: params,
+                            is_variadic,
                         };
 
                         break;
@@ -419,7 +425,13 @@ impl Parser {
                     self.lexer.advance();
 
                     if matches!(self.lexer.peek(), Some(TokenTypes::DataType(_))) {
-                        pointer_function_parameters = self.parse_parameter_list()?;
+                        let (params, is_variadic) = self.parse_parameter_list()?;
+
+                        if is_variadic {
+                            return Err(String::from("Function can not take a variadic argument"));
+                        }
+
+                        pointer_function_parameters = params;
                     } else {
                         final_type = self.parse_type()?;
                         self.lexer.advance();
@@ -477,8 +489,11 @@ impl Parser {
         Ok(final_type)
     }
 
-    pub fn parse_parameter_list(&mut self) -> Result<Vec<TypeNode>, String> {
+    /// Returns all the parameters in the form of TypeNodes and a boolean indicating if it has a variadic parameter  
+    pub fn parse_parameter_list(&mut self) -> Result<(Vec<TypeNode>, bool), String> {
         let mut param_list = Vec::new();
+
+        let mut is_variadic = false;
 
         while !matches!(
             self.lexer.peek(),
@@ -489,6 +504,19 @@ impl Parser {
                 Some(TokenTypes::Operator(OperatorTypes::Comma))
             ) {
                 return Err(String::from("Unexpected comma in parameter list"));
+            }
+
+            if let Some(TokenTypes::Operator(OperatorTypes::Ellipsis)) = self.lexer.peek() {
+                is_variadic = true;
+
+                if param_list.is_empty() {
+                    return Err(String::from(
+                        "Variadic parameter is expected to have other accompanying parameters",
+                    ));
+                }
+
+                self.lexer.advance();
+                break;
             }
 
             param_list.push(self.parse_type()?);
@@ -506,8 +534,10 @@ impl Parser {
                 self.lexer.advance();
             }
         }
-        self.lexer.advance();
-        Ok(param_list)
+
+        self.lexer
+            .expect(|x| matches!(x, TokenTypes::Operator(OperatorTypes::RParen)))?;
+        Ok((param_list, is_variadic))
     }
 
     fn parse_pointer_qualifiers(&mut self) -> Result<Vec<DataTypes>, String> {
@@ -544,6 +574,7 @@ impl Parser {
             kind: tag_type_kind,
             name: tag_type_name,
             qualifiers: qualifiers.clone(),
+            type_id: None,
         })
     }
 

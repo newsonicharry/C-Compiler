@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::format, thread::Scope};
 
 use crate::parser::{jump_label::JumpLabel, tag_types::helper::TagTypeData, type_parser::TypeNode};
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct SemanticInfo {
     type_id: Option<u32>,
     symbol_id: Option<u32>,
@@ -10,8 +10,8 @@ pub struct SemanticInfo {
 
 macro_rules! create_id {
     ($name:tt) => {
-        #[derive(Default, Clone, Copy, PartialEq, Eq)]
-        struct $name(u32);
+        #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+        pub struct $name(u32);
 
         impl $name {
             pub fn as_usize(&self) -> usize {
@@ -25,6 +25,7 @@ create_id!(SymbolId);
 create_id!(ScopeId);
 create_id!(TypeId);
 
+#[derive(Clone, Debug)]
 pub enum SymbolKind {
     Typedef,
     Variable,
@@ -38,13 +39,14 @@ pub enum SymbolKind {
     Default,
 }
 
-struct Symbol {
-    name: String,
-    kind: SymbolKind,
-    type_id: TypeId,
+#[derive(Clone, Debug)]
+pub struct Symbol {
+    pub name: String,
+    pub kind: SymbolKind,
+    pub type_id: TypeId,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct SymbolTable {
     table: Vec<Symbol>,
 }
@@ -69,7 +71,7 @@ impl SymbolTable {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum TypeTableValue {
     // where each type corresponds to a namespace,
     // except for members but members are stored within tag type
@@ -78,7 +80,7 @@ pub enum TypeTableValue {
     Label(JumpLabel),
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct TypeTable {
     table: Vec<TypeTableValue>,
 }
@@ -97,15 +99,15 @@ impl TypeTable {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum Namespace {
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Namespace {
     Label,
     TagType,
     Member,
     Identifier,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct ScopeTable {
     table: HashMap<(Namespace, String), SymbolId>,
 
@@ -161,6 +163,7 @@ impl ScopeTable {
     }
 }
 
+#[derive(Debug)]
 pub struct Semantics {
     scopes: Vec<ScopeTable>,
     curr_scope_id: ScopeId,
@@ -213,7 +216,7 @@ impl Semantics {
         self.curr_scope_id = self.curr_scope().last_child();
     }
 
-    pub fn expand_scope(&mut self) {
+    fn expand_scope(&mut self) {
         let next_id = self.get_next_scope_id();
         let parent_id = self.curr_scope_id;
 
@@ -275,27 +278,38 @@ impl Semantics {
     }
 
     pub fn check_typedef(&mut self, identifier: &str) -> Option<&TypeNode> {
+        if let Some(symbol) = self
+            .check_symbol(identifier, Namespace::Identifier)
+            .cloned()
+        {
+            if matches!(symbol.kind, SymbolKind::Typedef) {
+                let type_value = self.types.lookup(symbol.type_id);
+
+                let TypeTableValue::Identifier(type_node) = type_value else {
+                    unreachable!()
+                };
+
+                return Some(type_node);
+            }
+
+            // the identifier exists but its not a typedef meaning the identifier is not a type
+            return None;
+        }
+
+        return None;
+    }
+
+    pub fn check_symbol(&mut self, identifier: &str, namespace: Namespace) -> Option<&Symbol> {
         let original_scope_id = self.curr_scope_id;
 
         loop {
             // check if the potential typedef exists in the current scope
-            if let Some(symbol_id) = self.curr_scope().lookup(&Namespace::Identifier, identifier) {
+            if let Some(symbol_id) = self.curr_scope().lookup(&namespace, identifier) {
                 self.curr_scope_id = original_scope_id;
 
                 let symbol = self.symbols.lookup(symbol_id);
 
-                if matches!(symbol.kind, SymbolKind::Typedef) {
-                    let type_value = self.types.lookup(symbol.type_id);
-
-                    let TypeTableValue::Identifier(type_node) = type_value else {
-                        unreachable!()
-                    };
-
-                    return Some(type_node);
-                }
-
-                // the identifier exists but its not a typedef meaning the identifier is not a type
-                return None;
+                return Some(symbol);
             }
 
             // if the potential typedef doenst exist in this scope check its parents scope

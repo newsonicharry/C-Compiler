@@ -5,9 +5,9 @@ use crate::parser::helper::pretty_clean_string;
 use crate::parser::nodes::{GlobalNode, IndentDisplay};
 use crate::parser::parser::Parser;
 use crate::parser::type_parser::TypeNode;
-use crate::semantics::semantics::SemanticInfo;
+use crate::semantics::semantics::{SemanticInfo, SymbolKind, TypeTableValue};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum TagTypeMember {
     StructMember {
         item_type: TypeNode,
@@ -21,7 +21,7 @@ pub enum TagTypeMember {
     EnumMember {
         name: String,
         value: Option<ExprNode>,
-        semantic_info: SemanticInfo, // might not have to be given a type id
+        semantic_info: SemanticInfo,
     },
     TagType(TagTypeData),
 }
@@ -109,7 +109,7 @@ impl From<&KeywordTypes> for TagTypeKind {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TagTypeData {
     pub kind: TagTypeKind,
     pub is_defined: bool,
@@ -130,6 +130,7 @@ impl TagTypeData {
             kind: self.kind.clone(),
             name: name.to_string(),
             qualifiers: properties.clone(),
+            type_id: None,
         }
     }
 
@@ -216,6 +217,11 @@ impl Parser {
         // the qualifiers don't matter we just want to skip them here
         self.parse_tag_type_qualifiers()?;
 
+        // if its a typedef it will start with an identifier
+        if let Some(TokenTypes::Identifier(_)) = self.lexer.peek() {
+            return Ok(TagKeywordUsage::Variable);
+        }
+
         self.lexer.advance(); // move past the tag type keyword
 
         // Move past the tag type name if it exists
@@ -278,7 +284,6 @@ impl Parser {
         }
 
         let parsed_type = self.parse_type()?;
-
         self.lexer.recede_to_flag();
 
         if let Some(tag_type_kind) = parsed_type.contains_tag_type() {
@@ -513,7 +518,16 @@ impl Parser {
         }
 
         if storage_class_specifiers.contains(&DataTypes::Typedef) {
-            for typedef in defined_vars {}
+            self.update_tag_type_typedef(&defined_vars, &defined_tag_type);
+
+            // for typedef in defined_vars {
+            // println!("{typedef}");
+            // self.semantics.add_identifier(
+            //     &tag_type_name,
+            //     &TypeTableValue::Identifier(typedef),
+            //     SymbolKind::Typedef,
+            // );
+            // }
 
             return Ok(vec![]);
         } else {

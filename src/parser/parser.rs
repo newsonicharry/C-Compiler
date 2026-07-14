@@ -143,6 +143,14 @@ impl Parser {
                     block.extend(to_statement(self.parse_variable_statement()?))
                 }
 
+                TokenTypes::Identifier(identifier) => {
+                    if self.semantics.check_typedef(&identifier).is_some() {
+                        block.extend(to_statement(self.parse_variable_statement()?));
+                    } else {
+                        block.push(self.parse_single_statement()?);
+                    }
+                }
+
                 TokenTypes::LCurlyBrace => {
                     self.lexer.advance();
                     block.push(self.parse_block()?);

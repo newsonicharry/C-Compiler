@@ -249,10 +249,12 @@ pub enum OperatorTypes {
     // unary operators
     BitNot,
     Not,
+
+    Ellipsis,
 }
 
 impl OperatorTypes {
-    pub const MAPPINGS: &'static [(&'static str, Self); 32] = &[
+    pub const MAPPINGS: &'static [(&'static str, Self); 33] = &[
         ("(UNKNOWN)", Self::NoOperator),
         (",", Self::Comma),
         ("*", Self::Star),
@@ -285,6 +287,7 @@ impl OperatorTypes {
         ("!", Self::Not),
         (":", Self::Colon),
         ("?", Self::QuestionMark),
+        ("...", Self::Ellipsis),
     ];
 
     pub fn operator_in_words(&self) -> String {
@@ -321,6 +324,7 @@ impl OperatorTypes {
             Self::Not => "Not",
             Self::Colon => "Colon",
             Self::QuestionMark => "Question Mark",
+            Self::Ellipsis => "Ellipsis",
         };
 
         String::from(output)
