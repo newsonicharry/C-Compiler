@@ -2,6 +2,7 @@ use std::{fs::File, io::Read};
 
 use crate::{lexer::lexer::Lexer, parser::parser::Parser};
 
+mod ir;
 mod lexer;
 mod parser;
 mod semantics;

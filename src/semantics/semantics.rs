@@ -4,14 +4,14 @@ use crate::parser::{jump_label::JumpLabel, tag_types::helper::TagTypeData, type_
 
 #[derive(Clone, Default, Debug)]
 pub struct SemanticInfo {
-    type_id: Option<u32>,
-    symbol_id: Option<u32>,
+    type_id: Option<TypeId>,
+    symbol_id: Option<SymbolId>,
 }
 
 macro_rules! create_id {
     ($name:tt) => {
         #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
-        pub struct $name(u32);
+        pub struct $name(pub u32);
 
         impl $name {
             pub fn as_usize(&self) -> usize {
@@ -197,6 +197,14 @@ impl Semantics {
         name
     }
 
+    pub fn set_scope_id(&mut self, scope_id: ScopeId) {
+        self.curr_scope_id = scope_id;
+    }
+
+    pub fn curr_scope_id(&self) -> ScopeId {
+        self.curr_scope_id
+    }
+
     fn get_next_scope_id(&self) -> ScopeId {
         ScopeId(self.scopes.len() as u32)
     }
@@ -232,33 +240,12 @@ impl Semantics {
         }
     }
 
-    fn get_name_from_type_value(&mut self, type_value: &TypeTableValue) -> String {
-        match type_value {
-            TypeTableValue::Identifier(type_node) => match &**type_node {
-                TypeNode::Variable { name, .. }
-                | TypeNode::Function { name, .. }
-                | TypeNode::TagType { name, .. } => name.to_owned(),
-
-                _ => panic!("Given invalid type node"),
-            },
-
-            TypeTableValue::TagType(tag_type_data) => match &tag_type_data.name {
-                Some(name) => name.to_owned(),
-                _ => self.generate_new_name(),
-            },
-
-            TypeTableValue::Label(jump_label) => match jump_label {
-                _ => todo!(), // JumpLabel::Goto(goto_name) => goto_name.to_owned(),
-            },
-        }
-    }
-
     pub fn add_identifier(
         &mut self,
         name: &str,
         type_value: &TypeTableValue,
         symbol_kind: SymbolKind,
-    ) {
+    ) -> Result<SemanticInfo, String> {
         let namespace = match type_value {
             TypeTableValue::Identifier(..) => Namespace::Identifier,
             TypeTableValue::TagType(..) => Namespace::TagType,
@@ -269,12 +256,19 @@ impl Semantics {
         // let name = self.get_name_from_type_value(type_value);
 
         self.curr_scope()
-            .add_identifier(&namespace, &name, symbol_id);
+            .add_identifier(&namespace, &name, symbol_id)?;
 
         let type_id = self.types.next_type_id();
         self.types.add_type(type_value);
 
         self.symbols.add_symbol(&name, symbol_kind, type_id);
+
+        let semantic_info = SemanticInfo {
+            type_id: Some(type_id),
+            symbol_id: Some(symbol_id),
+        };
+
+        Ok(semantic_info)
     }
 
     pub fn check_typedef(&mut self, identifier: &str) -> Option<&TypeNode> {

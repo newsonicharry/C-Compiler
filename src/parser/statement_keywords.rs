@@ -99,6 +99,10 @@ impl Parser {
         self.lexer
             .expect(|x| matches!(x, TokenTypes::Operator(OperatorTypes::LParen)))?;
 
+        // the init clause means there will always be a scope, as one can define a variable there
+        // though it is possible that this scope is empty, such as a for(;;) or an ANSI for loop
+        self.semantics.enter_scope();
+
         let mut parse_section = |parse_var: bool| -> Result<Option<StatementNode>, String> {
             let next_token = self
                 .lexer
@@ -111,6 +115,7 @@ impl Parser {
 
                     Some(StatementNode::Block {
                         statements: to_statement(self.parse_variable_statement()?),
+                        scope_id: self.semantics.curr_scope_id(),
                     })
                 }
 
@@ -159,6 +164,8 @@ impl Parser {
         } else {
             body = Box::new(self.parse_single_statement()?);
         }
+
+        self.semantics.leave_scope();
 
         Ok(StatementNode::For {
             init: init_clause.map(|x| Box::new(x)),

@@ -1,2 +1,2 @@
+pub mod analysis;
 pub mod semantics;
-mod struct_semantics;

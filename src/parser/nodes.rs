@@ -4,16 +4,17 @@ use crate::parser::if_statement::IfStatement;
 use crate::parser::jump_label::JumpLabel;
 use crate::parser::tag_types::helper::TagTypeData;
 use crate::parser::type_parser::TypeNode;
-use crate::semantics::semantics::SemanticInfo;
+use crate::semantics::semantics::{ScopeId, SemanticInfo};
 use std::fmt::Display;
+use std::thread::Scope;
 
 pub trait IndentDisplay {
     fn indent_display(&self, indent: usize) -> String;
 }
 
-pub struct Root(pub Vec<GlobalNode>);
+pub struct AST(pub Vec<GlobalNode>);
 
-impl Display for Root {
+impl Display for AST {
     fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut output = String::new();
 
@@ -98,6 +99,7 @@ pub enum StatementNode {
     // block, expression, if, switch, while, do, for, return, break, continue, goto, label, case, default
     Block {
         statements: Vec<StatementNode>,
+        scope_id: ScopeId,
     },
 
     General(Box<GlobalNode>),
@@ -151,7 +153,7 @@ impl IndentDisplay for StatementNode {
         let next_str_indent = " ".repeat(indent + 2);
 
         match self {
-            Self::Block { statements } => {
+            Self::Block { statements, .. } => {
                 for (i, statement) in statements.iter().enumerate() {
                     output.push_str(&format!("{}", statement.indent_display(indent)));
                     if i != statements.len() - 1 {

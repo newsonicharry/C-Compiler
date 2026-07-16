@@ -2,7 +2,7 @@ use crate::lexer::language_features::KeywordTypes;
 use crate::lexer::language_features::{AssignmentTypes, OperatorTypes};
 use crate::lexer::lexer::{Lexer, TokenTypes};
 use crate::parser::helper::to_statement;
-use crate::parser::nodes::{GlobalNode, Root, StatementNode};
+use crate::parser::nodes::{AST, GlobalNode, StatementNode};
 use crate::parser::tag_types::helper::TagTypeKind;
 use crate::parser::type_parser::TypeNode;
 use crate::semantics::semantics::{SemanticInfo, Semantics};
@@ -20,26 +20,26 @@ impl Parser {
         }
     }
 
-    pub fn parse_program(&mut self) -> Result<Root, String> {
-        let mut root = Root(Vec::new());
+    pub fn parse_program(&mut self) -> Result<AST, String> {
+        let mut ast = AST(Vec::new());
 
         while let Some(token) = self.lexer.peek() {
             match token {
                 TokenTypes::Keyword(keyword) => match keyword {
-                    KeywordTypes::Struct => root.0.extend(self.parse_struct_keyword()?),
-                    KeywordTypes::Enum => root.0.extend(self.parse_enum_keyword()?),
-                    KeywordTypes::Union => root.0.extend(self.parse_union_keyword()?),
+                    KeywordTypes::Struct => ast.0.extend(self.parse_struct_keyword()?),
+                    KeywordTypes::Enum => ast.0.extend(self.parse_enum_keyword()?),
+                    KeywordTypes::Union => ast.0.extend(self.parse_union_keyword()?),
                     _ => todo!(),
                 },
 
                 TokenTypes::Identifier(identifier) => {
                     if self.semantics.check_typedef(&identifier).is_some() {
-                        root.0.extend(self.parse_data_type()?);
+                        ast.0.extend(self.parse_data_type()?);
                     }
                 }
 
                 TokenTypes::DataType(_) => {
-                    root.0.extend(self.parse_data_type()?);
+                    ast.0.extend(self.parse_data_type()?);
                 }
 
                 TokenTypes::Semicolon => {
@@ -50,7 +50,7 @@ impl Parser {
             }
         }
 
-        Ok(root)
+        Ok(ast)
     }
 
     fn parse_data_type(&mut self) -> Result<Vec<GlobalNode>, String> {
@@ -163,9 +163,13 @@ impl Parser {
         self.lexer
             .expect(|x| matches!(x, TokenTypes::RCurlyBrace))?;
 
+        let scope_id = self.semantics.curr_scope_id();
         self.semantics.leave_scope();
 
-        Ok(StatementNode::Block { statements: block })
+        Ok(StatementNode::Block {
+            statements: block,
+            scope_id: scope_id,
+        })
     }
 
     /// A high level variable parser
