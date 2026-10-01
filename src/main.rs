@@ -1,6 +1,13 @@
-use std::{fs::File, io::Read};
+use std::{
+    fs::{self, File},
+    io::Read,
+    process::Command,
+};
 
-use crate::{lexer::lexer::Lexer, parser::parser::Parser};
+use crate::{
+    ir::ir::IRParser, lexer::lexer::Lexer, parser::parser::Parser,
+    semantics::analysis::SemanticAnalysis,
+};
 
 mod ir;
 mod lexer;
@@ -19,14 +26,34 @@ fn main() {
     let mut parser = Parser::new(&lexer);
     let parsed_program = parser.parse_program();
 
-    // println!("{:?}", parser.semantics);
-
     if let Err(err_msg) = parsed_program {
         write_error_message(&program, FILE_PATH, &err_msg, &parser.lexer);
         return;
     }
 
-    println!("{}", parsed_program.unwrap());
+    let mut ast = parsed_program.unwrap();
+
+    let mut semantic_analysis = SemanticAnalysis {
+        ast: ast.0.iter_mut(),
+        semantics: &mut parser.semantics,
+    };
+
+    // let analysis = semantic_analysis.analyze().unwrap();
+
+    let mut ir = IRParser::new(&ast, &parser.semantics);
+    ir.parse();
+
+    fs::write("/tmp/compiler_output.ll", ir.program_to_llvm_ir()).unwrap();
+    Command::new("clang")
+        .args(&["/tmp/compiler_output.ll", "-o", "/tmp/compiler_output"])
+        .status();
+    // let result = Command::new("echo $?").output().expect("failed");
+    // println!("{}", String::from_utf8_lossy(&result.stdout));
+
+    println!("{}", ir.program_to_llvm_ir());
+    // analysis.
+
+    // println!("{}", ast);
 }
 
 fn write_error_message(file: &str, file_name: &str, error_msg: &str, lexer: &Lexer) {

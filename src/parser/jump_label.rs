@@ -7,7 +7,7 @@ use crate::parser::nodes::StatementNode;
 use crate::parser::parser::Parser;
 use std::fmt::Display;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum JumpLabel {
     Goto(String),
     DefaultCase,

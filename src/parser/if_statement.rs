@@ -46,7 +46,7 @@ impl IndentDisplay for IfStatement {
             } => {
                 output.push_str(&format!(
                     "\n{next_indent_str}(Condition \n{})\n{next_indent_str}(Body\n{}\n{next_indent_str})",
-                    &conditional.clone().display(indent + 4),
+                    &conditional.clone().indent_display(indent + 4),
                     &body.clone().indent_display(indent + 4)
                 ));
 

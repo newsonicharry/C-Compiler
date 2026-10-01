@@ -5,6 +5,7 @@ use crate::lexer::language_features::OperatorTypes;
 use crate::lexer::lexer::TokenTypes;
 use crate::parser::expression_parser::ExprNode;
 use crate::parser::helper::pretty_clean_string;
+use crate::parser::nodes::IndentDisplay;
 use crate::parser::parser::Parser;
 use std::fmt::Display;
 
@@ -30,17 +31,16 @@ pub enum AggregateInit {
 
 impl Display for AggregateInit {
     fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let final_str = self.display(0);
+        let final_str = self.indent_display(0);
 
         write!(display, "{final_str}")
     }
 }
-
-impl AggregateInit {
-    fn display(&self, indentation: usize) -> String {
+impl IndentDisplay for AggregateInit {
+    fn indent_display(&self, indent: usize) -> String {
         let mut output = String::new();
-        let indent_str = " ".repeat(indentation);
-        let next_indent_str = " ".repeat(indentation + 2);
+        let indent_str = " ".repeat(indent);
+        let next_indent_str = " ".repeat(indent + 2);
 
         match self {
             AggregateInit::InitElement { value } => {
@@ -61,7 +61,7 @@ impl AggregateInit {
                 output.push_str(&format!("{indent_str}(AggInit"));
 
                 for value in held_values {
-                    output.push_str(&format!("\n{}", value.display(indentation + 2)));
+                    output.push_str(&format!("\n{}", value.indent_display(indent + 2)));
                 }
 
                 output.push(')');

@@ -4,30 +4,52 @@ use crate::{
     lexer::language_features::DataTypes,
     parser::{
         nodes::{AST, GlobalNode, StatementNode},
-        type_parser::{SimpleType, TypeNode},
+        simple_type::SimpleType,
+        type_parser::TypeNode,
     },
     semantics::semantics::{ScopeId, Semantics, SymbolKind, TypeTableValue},
 };
 
 pub struct SemanticAnalysis<'a> {
-    ast: IterMut<'a, GlobalNode>,
-    semantics: &'a mut Semantics,
+    pub ast: IterMut<'a, GlobalNode>,
+    pub semantics: &'a mut Semantics,
 }
 
 impl<'a> SemanticAnalysis<'a> {
-    pub fn analysis(&mut self) -> Result<(), String> {
+    pub fn analyze(&mut self) -> Result<(), String> {
         self.semantics.set_scope_id(ScopeId(0));
 
         while let Some(node) = self.ast.next() {
             match node {
                 GlobalNode::Function { .. } => self.update_func_node(node)?,
-
+                // GlobalNode::Initalizer { .. } => self.update_init_node(node)?,
                 _ => todo!(),
             }
         }
 
         Ok(())
     }
+
+    /* fn update_init_node(&mut self, init_node: &mut GlobalNode) -> Result<(), String> {
+        // todo!()
+        let GlobalNode::Initalizer { var_type, .. } = init_node else {
+            unreachable!()
+        };
+
+        let type_clone = var_type.clone();
+
+        let TypeNode::Variable { name, .. } = var_type else {
+            unreachable!()
+        };
+
+        self.semantics.add_identifier(
+            name,
+            &TypeTableValue::Identifier(Box::new(type_clone)),
+            SymbolKind::Variable,
+        )?;
+
+        Ok(())
+    } */
 
     fn update_func_node(&mut self, func_node: &mut GlobalNode) -> Result<(), String> {
         self.semantics.set_scope_id(ScopeId(0));
@@ -73,15 +95,18 @@ impl<'a> SemanticAnalysis<'a> {
 
         for statement in statements {
             match statement {
-                StatementNode::General(node) => self.update_general_statement_ndoe(node)?,
+                StatementNode::General(node) => self.update_general_statement_node(node)?,
+                // StatementNode::Return()
                 _ => todo!(),
             }
         }
 
-        todo!()
+        // todo!()
+
+        Ok(())
     }
 
-    fn update_general_statement_ndoe(&mut self, node: &mut GlobalNode) -> Result<(), String> {
+    fn update_general_statement_node(&mut self, node: &mut GlobalNode) -> Result<(), String> {
         match node {
             GlobalNode::Initalizer { .. } => self.update_initalizer(node),
             GlobalNode::TagType { .. } => todo!(),
@@ -109,7 +134,8 @@ impl<'a> SemanticAnalysis<'a> {
             SymbolKind::Variable,
         )?;
 
-        todo!()
+        Ok(())
+        // todo!()
     }
 }
 
@@ -126,10 +152,10 @@ const TYPE_INFO: [(DataTypes, u16, bool); 7] = [
 fn get_type_info(simple_type: &SimpleType) -> (u16, bool, bool) {
     let mut bits = 0;
     let mut is_floating_point = false;
-    let is_unsigned = simple_type.properties.contains(&DataTypes::Unsigned);
+    let is_unsigned = simple_type.modifiers.contains(&DataTypes::Unsigned);
 
     for (data_type, num_bits, is_floating) in TYPE_INFO {
-        if simple_type.base_type == data_type || simple_type.properties.contains(&data_type) {
+        if simple_type.base_type == data_type || simple_type.modifiers.contains(&data_type) {
             bits = num_bits;
         }
 

@@ -2,33 +2,12 @@ use crate::lexer::language_features::{DataTypes, KeywordTypes, OperatorTypes};
 use crate::lexer::lexer::TokenTypes;
 use crate::parser::expression_parser::ExprNode;
 use crate::parser::helper::verify_next_in_comma_list;
+use crate::parser::nodes::IndentDisplay;
 use crate::parser::parser::Parser;
+use crate::parser::simple_type::SimpleType;
 use crate::parser::tag_types::helper::TagTypeKind;
 use crate::semantics::semantics::TypeId;
 use std::fmt::Display;
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct SimpleType {
-    pub base_type: DataTypes,
-    pub properties: Vec<DataTypes>,
-}
-
-impl Display for SimpleType {
-    fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut output = String::new();
-
-        let mut push_data_types = |data_type_list: &Vec<DataTypes>| {
-            for data_type in data_type_list {
-                output.push_str(&format!("{data_type} "));
-            }
-        };
-        push_data_types(&self.properties);
-
-        output.push_str(&self.base_type.to_string());
-
-        write!(display, "{output}")
-    }
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TypeNode {
@@ -68,6 +47,100 @@ pub enum TypeNode {
         parameters: Vec<TypeNode>,
         is_variadic: bool,
     },
+}
+
+impl IndentDisplay for TypeNode {
+    fn indent_display(&self, _indent: usize) -> String {
+        let mut output = String::new();
+
+        match self {
+            TypeNode::Variable { name, held_value } => {
+                if !name.is_empty() {
+                    output.push_str(&format!("(Name {} {})", name, held_value));
+                }
+            }
+
+            TypeNode::Array { expr, held_value } => {
+                output.push_str(&format!(
+                    "(Arr {} {})",
+                    expr.to_string()
+                        .chars()
+                        .filter(|x| *x != '\n')
+                        .collect::<String>(),
+                    held_value
+                ));
+            }
+
+            TypeNode::Pointer {
+                qualifiers,
+                held_value,
+                function_parameters,
+            } => {
+                Self::write_pointer_data_for_display(
+                    &mut output,
+                    qualifiers,
+                    held_value,
+                    function_parameters,
+                );
+            }
+
+            TypeNode::Normal {
+                held_value,
+                held_type,
+            } => {
+                output.push_str(&format!("(Type {} {}", held_type, held_value));
+
+                if output.ends_with(' ') {
+                    output.pop();
+                }
+
+                output.push_str(")");
+            }
+
+            TypeNode::TagType {
+                kind,
+                name,
+                qualifiers,
+                ..
+            } => {
+                match kind {
+                    TagTypeKind::Struct => output.push_str(&format!("(Struct")),
+                    TagTypeKind::Union => output.push_str(&format!("(Union")),
+                    TagTypeKind::Enum => output.push_str(&format!("(Enum")),
+                }
+
+                Self::display_tag_type(&mut output, name, qualifiers);
+            }
+
+            TypeNode::Function {
+                name,
+                return_type,
+                parameters,
+                is_variadic,
+            } => {
+                output.push_str(&format!("(Function {name} (Return {return_type})"));
+
+                if !parameters.is_empty() {
+                    output.push_str(" (Params");
+                    for parameter in parameters {
+                        output.push_str(&format!(" {}", parameter));
+                    }
+
+                    if *is_variadic {
+                        output.push_str(" (Variadic)");
+                    }
+
+                    output.push(')');
+                }
+
+                output.push(')');
+            }
+
+            TypeNode::Empty => {}
+        }
+
+        output
+    }
 }
 
 impl TypeNode {
@@ -146,11 +219,7 @@ impl TypeNode {
             return false;
         };
 
-        if held_type
-            .properties
-            .iter()
-            .any(|x| x.is_storage_specifier() || x.is_function_specifier())
-        {
+        if held_type.storage.is_some() {
             return true;
         }
 
@@ -164,34 +233,38 @@ impl TypeNode {
             _ => return false,
         };
 
-        let type_properties = match nested_value.get_most_nested_layer() {
-            Self::Normal { held_type, .. } => &mut held_type.properties,
-            Self::TagType { qualifiers, .. } => qualifiers,
+        match nested_value.get_most_nested_layer() {
+            Self::Normal { held_type, .. } => {
+                return matches!(held_type.storage, Some(DataTypes::Typedef));
+            }
+            Self::TagType { qualifiers, .. } => return qualifiers.contains(&DataTypes::Typedef),
             _ => return false,
         };
-
-        if type_properties.contains(&DataTypes::Typedef) {
-            return true;
-        }
-
-        false
     }
 
     pub fn remove_typedef_property(&mut self) {
         // at this point its a normal because we've already stripped out the outer part (which is either a variable or a function)
         let final_layer = self.get_most_nested_layer();
 
-        let type_properties = match final_layer {
-            Self::Normal { held_type, .. } => &mut held_type.properties,
-            Self::TagType { qualifiers, .. } => qualifiers,
+        match final_layer {
+            Self::Normal { held_type, .. } => {
+                if matches!(held_type.storage, Some(DataTypes::Typedef)) {
+                    held_type.storage = None;
+                }
+            }
+            Self::TagType { qualifiers, .. } => {
+                if let Some(position) = qualifiers.iter().position(|x| *x == DataTypes::Typedef) {
+                    qualifiers.remove(position);
+                }
+            }
             _ => return,
         };
+    }
 
-        if let Some(position) = type_properties
-            .iter()
-            .position(|x| *x == DataTypes::Typedef)
-        {
-            type_properties.remove(position);
+    pub fn get_var_inner_layer<'a>(&'a self) -> &'a TypeNode {
+        match self {
+            Self::Variable { held_value, .. } => &held_value,
+            _ => panic!("Not given a variable"),
         }
     }
 
@@ -217,12 +290,12 @@ impl TypeNode {
         if !function_parameters.is_empty() {
             output.push_str("(Params ");
             for parameter in function_parameters {
-                output.push_str(&Self::display(parameter));
+                output.push_str(&parameter.to_string());
             }
             output.push_str(") ");
         }
 
-        output.push_str(&format!("{})", Self::display(held_value)));
+        output.push_str(&format!("{held_value})"));
     }
 
     fn display_tag_type(output: &mut String, name: &str, qualifiers: &Vec<DataTypes>) {
@@ -239,110 +312,11 @@ impl TypeNode {
 
         output.push_str(")");
     }
-
-    fn display(node: &TypeNode) -> String {
-        let mut output = String::new();
-
-        match node {
-            TypeNode::Variable { name, held_value } => {
-                if !name.is_empty() {
-                    output.push_str(&format!("(Name {} {})", name, Self::display(held_value)));
-                }
-            }
-
-            TypeNode::Array { expr, held_value } => {
-                output.push_str(&format!(
-                    "(Arr {} {})",
-                    expr.to_string()
-                        .chars()
-                        .filter(|x| *x != '\n')
-                        .collect::<String>(),
-                    Self::display(&held_value)
-                ));
-            }
-
-            TypeNode::Pointer {
-                qualifiers,
-                held_value,
-                function_parameters,
-            } => {
-                Self::write_pointer_data_for_display(
-                    &mut output,
-                    qualifiers,
-                    held_value,
-                    function_parameters,
-                );
-            }
-
-            TypeNode::Normal {
-                held_value,
-                held_type,
-            } => {
-                output.push_str(&format!(
-                    "(Type {} {}",
-                    held_type,
-                    Self::display(held_value)
-                ));
-
-                if output.ends_with(' ') {
-                    output.pop();
-                }
-
-                output.push_str(")");
-            }
-
-            TypeNode::TagType {
-                kind,
-                name,
-                qualifiers,
-                ..
-            } => {
-                match kind {
-                    TagTypeKind::Struct => output.push_str(&format!("(Struct")),
-                    TagTypeKind::Union => output.push_str(&format!("(Union")),
-                    TagTypeKind::Enum => output.push_str(&format!("(Enum")),
-                }
-
-                Self::display_tag_type(&mut output, name, qualifiers);
-            }
-
-            TypeNode::Function {
-                name,
-                return_type,
-                parameters,
-                is_variadic,
-            } => {
-                output.push_str(&format!(
-                    "(Function {name} (Return {})",
-                    Self::display(return_type)
-                ));
-
-                if !parameters.is_empty() {
-                    output.push_str(" (Params");
-                    for parameter in parameters {
-                        output.push_str(&format!(" {}", parameter));
-                    }
-
-                    if *is_variadic {
-                        output.push_str(" (Variadic)");
-                    }
-
-                    output.push(')');
-                }
-
-                output.push(')');
-            }
-
-            TypeNode::Empty => {}
-        }
-
-        output
-    }
 }
 
 impl Display for TypeNode {
     fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let final_str = Self::display(self);
+        let final_str = self.indent_display(0);
 
         write!(display, "{final_str}")
     }
@@ -579,33 +553,12 @@ impl Parser {
     }
 
     fn parse_normal_type(&mut self) -> Result<TypeNode, String> {
-        let mut base_type = DataTypes::NoType;
-        let mut properties: Vec<DataTypes> = Vec::new();
-
-        while let Some(TokenTypes::DataType(data_type)) = self.lexer.peek() {
-            if data_type.is_modifier()
-                || data_type.is_qualifier()
-                || data_type.is_storage_specifier()
-                || data_type.is_function_specifier()
-            {
-                properties.push(data_type);
-            } else {
-                if base_type != DataTypes::NoType {
-                    return Err(format!(
-                        "Unexpected data type of {data_type}, already found type {base_type}"
-                    ));
-                }
-
-                base_type = data_type;
-            }
-
-            self.lexer.advance();
-        }
+        let mut simple_type = self.parse_simple_type()?;
 
         // check for a typedef if the current type is not a completed type
         // (aka it has no base type, such as an int or a float)
         if let Some(TokenTypes::Identifier(identifier)) = self.lexer.peek()
-            && base_type == DataTypes::NoType
+            && simple_type.base_type == DataTypes::NoType
         {
             if let Some(typedef_type) = self.semantics.check_typedef(&identifier).cloned() {
                 let TypeNode::Normal {
@@ -616,7 +569,24 @@ impl Parser {
                     return Err(String::from("Unexpected typedef type in new type"));
                 };
 
-                typedef_simple_type.properties.extend(properties.clone());
+                typedef_simple_type
+                    .qualifiers
+                    .extend(simple_type.qualifiers);
+                typedef_simple_type.modifiers.extend(simple_type.modifiers);
+
+                if let Some(storage_type) = simple_type.storage {
+                    if let Some(typedef_storage) = typedef_simple_type.storage
+                        && typedef_storage != storage_type
+                    {
+                        return Err(String::from(
+                            "Type is not allowed to have more than one stroage specifier",
+                        ));
+                    }
+
+                    typedef_simple_type.storage = Some(storage_type);
+                }
+
+                Self::verify_simple_type(&mut typedef_simple_type)?;
 
                 return Ok(TypeNode::Normal {
                     held_type: typedef_simple_type,
@@ -625,44 +595,27 @@ impl Parser {
             }
         }
 
-        // error if there are multiple typedefs
-        if properties
-            .iter()
-            .filter(|x| **x == DataTypes::Typedef)
-            .count()
-            > 1
-        {
-            return Err(String::from(
-                "Expected only a single typedef, found multiple",
-            ));
-        }
+        Self::verify_simple_type(&mut simple_type)?;
 
-        let tag_type = self.parse_normal_tag_type(&properties)?;
+        let mut tag_type_properties = simple_type.qualifiers.clone();
+        if let Some(storage) = simple_type.storage {
+            tag_type_properties.push(storage);
+        };
+
+        let tag_type = self.parse_normal_tag_type(&tag_type_properties)?;
         if !matches!(tag_type, TypeNode::Empty) {
             return Ok(tag_type);
         }
 
-        let is_modifier = properties.iter().any(|x| x.is_modifier());
-
-        // a long or a short modifier is still a long or a short without an implicit int base type
-        // (e.g., short x; is just as valid as short int x;)
-        if is_modifier && base_type == DataTypes::NoType {
-            base_type = DataTypes::Int;
-        }
         // occurs when there is no base type (e.g., const x; is not a valid type)
-        else if !is_modifier && base_type == DataTypes::NoType {
+        if simple_type.modifiers.is_empty() && simple_type.base_type == DataTypes::NoType {
             return Err(String::from(
                 "Not given a valid base type, only a modifer or qualifier.",
             ));
         }
 
-        let final_type = SimpleType {
-            base_type,
-            properties,
-        };
-
         Ok(TypeNode::Normal {
-            held_type: final_type,
+            held_type: simple_type,
             held_value: Box::new(TypeNode::Empty),
         })
     }

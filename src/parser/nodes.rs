@@ -64,7 +64,7 @@ impl IndentDisplay for GlobalNode {
             Self::Function {
                 signature, body, ..
             } => {
-                output.push_str(&signature.to_string());
+                output.push_str(&format!("{str_indent}{signature}"));
 
                 if let Some(body) = body {
                     output.pop();
@@ -79,7 +79,7 @@ impl IndentDisplay for GlobalNode {
                 output.push_str(&format!("{str_indent}(Variable {var_type}"));
 
                 if let Some(expression) = r_value.clone() {
-                    output.push_str(&format!("\n{}", &expression.display(indent + 2)));
+                    output.push_str(&format!("\n{}", &expression.indent_display(indent + 2)));
                 }
 
                 output.push_str(")");
@@ -165,7 +165,7 @@ impl IndentDisplay for StatementNode {
             Self::Expression(expr) => {
                 output.push_str(&format!(
                     "{str_indent}(Expr\n{})",
-                    expr.clone().display(indent + 2)
+                    expr.clone().indent_display(indent + 2)
                 ));
             }
 
@@ -203,7 +203,7 @@ impl IndentDisplay for StatementNode {
                 output.push_str(&format!("{str_indent}(While\n"));
                 output.push_str(&format!(
                     "{next_str_indent}(Condition\n{})\n",
-                    conditional.clone().display(indent + 4)
+                    conditional.clone().indent_display(indent + 4)
                 ));
 
                 output.push_str(&format!(
@@ -216,7 +216,7 @@ impl IndentDisplay for StatementNode {
                 output.push_str(&format!("{str_indent}(DoWhile\n"));
                 output.push_str(&format!(
                     "{next_str_indent}(Condition\n{})\n",
-                    conditional.clone().display(indent + 4)
+                    conditional.clone().indent_display(indent + 4)
                 ));
 
                 output.push_str(&format!(
@@ -241,14 +241,20 @@ impl IndentDisplay for StatementNode {
 
                 output.push_str(&format!("\n{next_str_indent}(Body"));
                 if let Some(condition) = condition {
-                    output.push_str(&format!("\n{}", condition.clone().display(indent + 4)));
+                    output.push_str(&format!(
+                        "\n{}",
+                        condition.clone().indent_display(indent + 4)
+                    ));
                 }
 
                 output.push(')');
 
                 output.push_str(&format!("\n{next_str_indent}(Iterate"));
                 if let Some(iteration) = iteration {
-                    output.push_str(&format!("\n{}", iteration.clone().display(indent + 4)));
+                    output.push_str(&format!(
+                        "\n{}",
+                        iteration.clone().indent_display(indent + 4)
+                    ));
                 }
 
                 output.push(')');

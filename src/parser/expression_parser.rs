@@ -9,7 +9,9 @@ use crate::lexer::number_parser::IntType;
 use crate::parser::aggregate_init::AggregateInit;
 use crate::parser::helper::pretty_clean_string;
 use crate::parser::helper::verify_next_in_comma_list;
+use crate::parser::nodes::IndentDisplay;
 use crate::parser::parser::Parser;
+use crate::parser::simple_type::SimpleType;
 use crate::parser::type_parser::TypeNode;
 
 use std::fmt::Display;
@@ -103,7 +105,7 @@ pub enum ExprNode {
         held: Box<SizeOf>,
     },
     Cast {
-        all_casts: Vec<TypeNode>,
+        cast_type: Box<TypeNode>,
         expr: Box<ExprNode>,
     },
     Aggregate {
@@ -112,10 +114,20 @@ pub enum ExprNode {
 }
 
 impl ExprNode {
-    pub fn display(self, indentation: usize) -> String {
+    pub fn add_cast(&mut self, cast_type: &SimpleType) {
+        todo!()
+        // *self = Self::Cast {
+        //     cast_type: cast_type.clone(),
+        //     expr: Box::new(self.clone()),
+        // };
+    }
+}
+
+impl IndentDisplay for ExprNode {
+    fn indent_display(&self, indent: usize) -> String {
         let mut output = String::new();
-        let indent_str = " ".repeat(indentation);
-        let next_indent_str = " ".repeat(indentation + 2);
+        let indent_str = " ".repeat(indent);
+        let next_indent_str = " ".repeat(indent + 2);
 
         match self {
             Self::Binary {
@@ -131,8 +143,8 @@ impl ExprNode {
 
                 output.push_str(&format!(
                     "{indent_str}(Binary\n{}\n{next_indent_str}(Op {op_as_str})\n{})",
-                    left.display(indentation + 2),
-                    right.display(indentation + 2)
+                    left.indent_display(indent + 2),
+                    right.indent_display(indent + 2)
                 ));
             }
 
@@ -143,24 +155,24 @@ impl ExprNode {
             } => {
                 output.push_str(&format!(
                     "{indent_str}(Ternary\n{}\n{}\n{})",
-                    if_expr.display(indentation + 2),
-                    then_expr.display(indentation + 2),
-                    else_expr.display(indentation + 2)
+                    if_expr.indent_display(indent + 2),
+                    then_expr.indent_display(indent + 2),
+                    else_expr.indent_display(indent + 2)
                 ));
             }
 
             Self::PostFix { left, right } => {
                 output.push_str(&format!(
                     "{indent_str}(Postfix\n{}\n{})",
-                    left.display(indentation + 2),
-                    right.display(indentation + 2)
+                    left.indent_display(indent + 2),
+                    right.indent_display(indent + 2)
                 ));
             }
 
             Self::Unary { operator, expr } => {
                 output.push_str(&format!(
                     "{indent_str}(Unary\n{next_indent_str}(Op {operator})\n{})",
-                    expr.display(indentation + 2)
+                    expr.indent_display(indent + 2)
                 ));
             }
 
@@ -196,8 +208,8 @@ impl ExprNode {
                 };
                 output.push_str(&format!("{indent_str}({name} (Var {member})"));
 
-                if !matches!(*next_member, ExprNode::Empty) {
-                    output.push_str(&format!("\n{}", next_member.display(indentation + 2)));
+                if !matches!(**next_member, ExprNode::Empty) {
+                    output.push_str(&format!("\n{}", next_member.indent_display(indent + 2)));
                 }
 
                 output.push(')');
@@ -222,11 +234,11 @@ impl ExprNode {
             } => {
                 output.push_str(&format!(
                     "{indent_str}(Accessor\n{}",
-                    expr.display(indentation + 2),
+                    expr.indent_display(indent + 2),
                 ));
 
-                if !matches!(*nested_accessor, ExprNode::Empty) {
-                    output.push_str(&format!("\n{}", nested_accessor.display(indentation + 2)));
+                if !matches!(**nested_accessor, ExprNode::Empty) {
+                    output.push_str(&format!("\n{}", nested_accessor.indent_display(indent + 2)));
                 }
 
                 output.push(')');
@@ -244,28 +256,27 @@ impl ExprNode {
                 output.push_str(&format!("{indent_str}(FuncCall"));
 
                 for arg in args {
-                    output.push_str(&format!(" {}", arg.display(0)));
+                    output.push_str(&format!(" {}", arg.indent_display(0)));
                 }
 
-                if !matches!(*nested_call, ExprNode::Empty) {
-                    output.push_str(&format!("\n{}", nested_call.display(indentation + 2)));
+                if !matches!(**nested_call, ExprNode::Empty) {
+                    output.push_str(&format!("\n{}", nested_call.indent_display(indent + 2)));
                 }
 
                 output.push(')');
             }
 
-            Self::Cast { all_casts, expr } => {
-                output.push_str(&format!("{indent_str}(Cast"));
+            Self::Cast { cast_type, expr } => {
+                output.push_str(&format!(
+                    "{indent_str}(Cast {}",
+                    pretty_clean_string(&cast_type.indent_display(indent + 2))
+                ));
 
-                for cast in all_casts {
-                    output.push_str(&format!(" {cast}"));
-                }
-
-                output.push_str(&format!("\n{})", expr.display(indentation + 2)));
+                output.push_str(&format!("\n{})", expr.indent_display(indent + 2)));
             }
 
             Self::Aggregate { aggregate } => {
-                output.push_str(&format!("{indent_str}{aggregate}"));
+                output.push_str(&aggregate.indent_display(indent));
             }
 
             Self::Empty => {
@@ -279,7 +290,7 @@ impl ExprNode {
 
 impl Display for ExprNode {
     fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let final_str = self.clone().display(0);
+        let final_str = self.clone().indent_display(0);
 
         write!(display, "{final_str}")
     }
@@ -287,33 +298,18 @@ impl Display for ExprNode {
 
 impl Parser {
     fn parse_cast(&mut self) -> Result<ExprNode, String> {
-        let mut all_casts = Vec::new();
+        self.lexer
+            .expect(|x| matches!(x, TokenTypes::Operator(OperatorTypes::LParen)))?;
 
-        while let Some(TokenTypes::Operator(OperatorTypes::LParen)) = self.lexer.peek() {
-            let Some(future_token) = self.lexer.forward_peek() else {
-                return Err(format!("Expected next token in expression, got nothing"));
-            };
+        let cast_type = self.parse_type()?;
 
-            if !matches!(future_token, TokenTypes::DataType(_))
-                && !matches!(future_token, TokenTypes::Keyword(KeywordTypes::Struct))
-            {
-                break;
-            }
-            self.lexer.advance();
-
-            all_casts.push(self.parse_type()?);
-
-            self.lexer
-                .expect(|x| matches!(x, TokenTypes::Operator(OperatorTypes::RParen)))?;
-        }
-
-        // because we cast use the rightward one first
-        all_casts.reverse();
+        self.lexer
+            .expect(|x| matches!(x, TokenTypes::Operator(OperatorTypes::RParen)))?;
 
         let parsed_expr = self.parse_expression(u8::MAX)?;
 
         Ok(ExprNode::Cast {
-            all_casts,
+            cast_type: Box::new(cast_type),
             expr: Box::new(parsed_expr),
         })
     }
@@ -676,6 +672,8 @@ impl Parser {
                     let node;
                     if matches!(future_token, TokenTypes::DataType(_))
                         | matches!(future_token, TokenTypes::Keyword(KeywordTypes::Struct))
+                        | matches!(future_token, TokenTypes::Keyword(KeywordTypes::Enum))
+                        | matches!(future_token, TokenTypes::Keyword(KeywordTypes::Union))
                     {
                         node = self.parse_cast()?;
                     } else {

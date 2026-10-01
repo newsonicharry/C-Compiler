@@ -85,7 +85,7 @@ impl KeywordTypes {
 impl_from_str_for_enum!(KeywordTypes);
 impl_display_for_enum!(KeywordTypes);
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default, PartialOrd, Ord)]
 pub enum DataTypes {
     #[default]
     NoType,
@@ -145,8 +145,7 @@ impl DataTypes {
 
     pub fn is_qualifier(&self) -> bool {
         match *self {
-            //  auto is not technically a qualifier but we assume it is here
-            Self::Const | Self::Volatile | Self::Restrict | Self::Auto => true,
+            Self::Const | Self::Volatile | Self::Restrict => true,
             _ => false,
         }
     }

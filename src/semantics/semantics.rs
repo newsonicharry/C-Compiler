@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::format, thread::Scope};
 
 use crate::parser::{jump_label::JumpLabel, tag_types::helper::TagTypeData, type_parser::TypeNode};
 
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default, Debug, PartialEq)]
 pub struct SemanticInfo {
     type_id: Option<TypeId>,
     symbol_id: Option<SymbolId>,
@@ -71,7 +71,7 @@ impl SymbolTable {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TypeTableValue {
     // where each type corresponds to a namespace,
     // except for members but members are stored within tag type
@@ -80,18 +80,27 @@ pub enum TypeTableValue {
     Label(JumpLabel),
 }
 
+// todo: use hashmaps for the table, interface doesnt have to change just don't need to use o(n) when o(1) is possible
 #[derive(Default, Debug)]
 struct TypeTable {
+    // type_lookup: HashMap<TypeTableValue, >
     table: Vec<TypeTableValue>,
 }
 
 impl TypeTable {
-    pub fn next_type_id(&self) -> TypeId {
-        TypeId(self.table.len() as u32)
-    }
+    // pub fn next_type_id(&self) -> TypeId {
+    // TypeId(self.table.len() as u32)
+    // }
 
-    pub fn add_type(&mut self, type_value: &TypeTableValue) {
+    pub fn add_type(&mut self, type_value: &TypeTableValue) -> TypeId {
+        for (i, curr_type) in self.table.iter().enumerate() {
+            if curr_type == type_value {
+                return TypeId(i as u32);
+            }
+        }
+
         self.table.push(type_value.clone());
+        TypeId(self.table.len() as u32)
     }
 
     fn lookup(&self, type_id: TypeId) -> &TypeTableValue {
@@ -258,8 +267,7 @@ impl Semantics {
         self.curr_scope()
             .add_identifier(&namespace, &name, symbol_id)?;
 
-        let type_id = self.types.next_type_id();
-        self.types.add_type(type_value);
+        let type_id = self.types.add_type(type_value);
 
         self.symbols.add_symbol(&name, symbol_kind, type_id);
 

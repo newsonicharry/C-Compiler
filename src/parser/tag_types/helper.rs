@@ -7,7 +7,7 @@ use crate::parser::parser::Parser;
 use crate::parser::type_parser::TypeNode;
 use crate::semantics::semantics::{SemanticInfo, SymbolKind, TypeTableValue};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TagTypeMember {
     StructMember {
         item_type: TypeNode,
@@ -109,7 +109,7 @@ impl From<&KeywordTypes> for TagTypeKind {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TagTypeData {
     pub kind: TagTypeKind,
     pub is_defined: bool,

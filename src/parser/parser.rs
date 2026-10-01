@@ -5,7 +5,7 @@ use crate::parser::helper::to_statement;
 use crate::parser::nodes::{AST, GlobalNode, StatementNode};
 use crate::parser::tag_types::helper::TagTypeKind;
 use crate::parser::type_parser::TypeNode;
-use crate::semantics::semantics::{SemanticInfo, Semantics};
+use crate::semantics::semantics::{ScopeId, SemanticInfo, Semantics};
 
 pub struct Parser {
     pub lexer: Lexer,
@@ -101,6 +101,12 @@ impl Parser {
             return Ok(vec![function]);
         }
 
+        if self.semantics.curr_scope_id() != ScopeId(0) {
+            return Err(String::from(
+                "Function definition not allowed outside of global scope",
+            ));
+        }
+
         self.lexer
             .expect(|x| matches!(x, TokenTypes::LCurlyBrace))?;
         let body = self.parse_block()?;
@@ -140,7 +146,7 @@ impl Parser {
                 }
 
                 TokenTypes::DataType(_) => {
-                    block.extend(to_statement(self.parse_variable_statement()?))
+                    block.extend(to_statement(self.parse_function_or_var()?))
                 }
 
                 TokenTypes::Identifier(identifier) => {

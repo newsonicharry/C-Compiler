@@ -1,21 +1,27 @@
+/* int do_something(void) {
 
+  int first = 10;
+  int second = first * 2 + 5;
 
-const int FIRST = 10;
-const int SECOND = 20;
-int GLOBAL_VAR = FIRST + SECOND;
+  return second;
+}
 
+int main(void) { return do_something(); } */
 
-int main(){
+// #include <stdio.h>
 
-  // struct Point{
-  //   int x;
-  //   int y;
-  // };
+// int do_something(void);
 
-  // struct Point p1;
-  // p1.x = 10;
-  // p1.y = 20;
+int main(void) {
 
+  // int my_var;
+  // do_something();
+
+  // int x = 10;
+  // int *my_ptr = &x;
+  int x = 10 + 20 * 30;
 
   return 0;
 }
+
+// int do_something(void) { return 100; }

@@ -5,6 +5,7 @@ pub mod helper;
 mod if_statement;
 pub mod jump_label;
 pub mod nodes;
+pub mod simple_type;
 mod statement_keywords;
 pub mod tag_types;
 pub mod type_parser;
