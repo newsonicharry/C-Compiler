@@ -38,7 +38,9 @@ fn main() {
         semantics: &mut parser.semantics,
     };
 
-    // let analysis = semantic_analysis.analyze().unwrap();
+    let analysis = semantic_analysis.analyze().unwrap();
+
+    println!("{}", ast);
 
     let mut ir = IRParser::new(&ast, &parser.semantics);
     ir.parse();
@@ -46,14 +48,11 @@ fn main() {
     fs::write("/tmp/compiler_output.ll", ir.program_to_llvm_ir()).unwrap();
     Command::new("clang")
         .args(&["/tmp/compiler_output.ll", "-o", "/tmp/compiler_output"])
-        .status();
-    // let result = Command::new("echo $?").output().expect("failed");
-    // println!("{}", String::from_utf8_lossy(&result.stdout));
+        .status()
+        .expect("Failed");
 
     println!("{}", ir.program_to_llvm_ir());
     // analysis.
-
-    // println!("{}", ast);
 }
 
 fn write_error_message(file: &str, file_name: &str, error_msg: &str, lexer: &Lexer) {

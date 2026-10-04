@@ -3,11 +3,12 @@ use std::slice::IterMut;
 use crate::{
     lexer::language_features::DataTypes,
     parser::{
+        expression_parser::ExprNode,
         nodes::{AST, GlobalNode, StatementNode},
         simple_type::SimpleType,
         type_parser::TypeNode,
     },
-    semantics::semantics::{ScopeId, Semantics, SymbolKind, TypeTableValue},
+    semantics::semantics::{Namespace, ScopeId, Semantics, SymbolKind, TypeTableValue},
 };
 
 pub struct SemanticAnalysis<'a> {
@@ -82,6 +83,35 @@ impl<'a> SemanticAnalysis<'a> {
         Ok(())
     }
 
+    fn update_expr_node(&mut self, expr: &mut ExprNode) -> Result<(), String> {
+        match expr {
+            ExprNode::Binary {
+                left,
+                operator: _,
+                right,
+            } => {
+                self.update_expr_node(left)?;
+                self.update_expr_node(right)?;
+            }
+            ExprNode::Identifier {
+                identifier,
+                semantic_info,
+            } => {
+                let Some(symbol) = self
+                    .semantics
+                    .check_symbol(identifier, Namespace::Identifier)
+                else {
+                    return Err(format!("Undefined identifier {identifier} in expression"));
+                };
+
+                semantic_info.symbol_id = Some(symbol.symbol_id);
+            }
+            _ => {}
+        };
+
+        Ok(())
+    }
+
     fn update_block_node(&mut self, block: &mut StatementNode) -> Result<(), String> {
         let StatementNode::Block {
             statements,
@@ -96,7 +126,12 @@ impl<'a> SemanticAnalysis<'a> {
         for statement in statements {
             match statement {
                 StatementNode::General(node) => self.update_general_statement_node(node)?,
-                // StatementNode::Return()
+                StatementNode::Expression(expr) => self.update_expr_node(expr)?,
+                StatementNode::Return(potential_expr) => {
+                    if let Some(expr) = potential_expr {
+                        self.update_expr_node(expr)?;
+                    }
+                }
                 _ => todo!(),
             }
         }
@@ -128,11 +163,15 @@ impl<'a> SemanticAnalysis<'a> {
             unreachable!();
         };
 
-        let info = self.semantics.add_identifier(
+        *semantic_info = self.semantics.add_identifier(
             &name,
             &TypeTableValue::Identifier(held_value),
             SymbolKind::Variable,
         )?;
+
+        if let Some(r_value) = r_value {
+            self.update_expr_node(r_value)?;
+        }
 
         Ok(())
         // todo!()

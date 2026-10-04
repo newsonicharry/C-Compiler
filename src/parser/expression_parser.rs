@@ -13,9 +13,9 @@ use crate::parser::nodes::IndentDisplay;
 use crate::parser::parser::Parser;
 use crate::parser::simple_type::SimpleType;
 use crate::parser::type_parser::TypeNode;
+use crate::semantics::semantics::SemanticInfo;
 
 use std::fmt::Display;
-use std::u8;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SizeOf {
@@ -72,6 +72,7 @@ pub enum ExprNode {
 
     Identifier {
         identifier: String,
+        semantic_info: SemanticInfo,
     },
     Unary {
         operator: OperatorTypes,
@@ -192,7 +193,7 @@ impl IndentDisplay for ExprNode {
                 output.push_str(&format!("{indent_str}(Str {string})"));
             }
 
-            Self::Identifier { identifier } => {
+            Self::Identifier { identifier, .. } => {
                 output.push_str(&format!("{indent_str}(Var {identifier})"));
             }
 
@@ -514,7 +515,10 @@ impl Parser {
         let mut node = ExprNode::Empty;
 
         if let Some(TokenTypes::Identifier(identifier)) = self.lexer.peek() {
-            node = ExprNode::Identifier { identifier };
+            node = ExprNode::Identifier {
+                identifier,
+                semantic_info: SemanticInfo::default(),
+            };
             self.lexer.advance();
         }
 
@@ -612,7 +616,10 @@ impl Parser {
 
             self.lexer.advance();
 
-            let next_min_precedence = precedence + 1;
+            let next_min_precedence = match token {
+                TokenTypes::Assignment(..) => precedence,
+                _ => precedence + 1,
+            };
 
             if matches!(token, TokenTypes::Operator(OperatorTypes::QuestionMark)) {
                 let middle = self.parse_expression(next_min_precedence)?;
@@ -873,7 +880,10 @@ mod tests {
         let test_cases = vec![
             ("(int)x", "(Cast (Type int) (Var x))"),
             ("(double)i", "(Cast (Type double) (Var i))"),
-            ("(int)(double)x", "(Cast (Type double) (Type int) (Var x))"),
+            (
+                "(int)(double)x",
+                "(Cast (Type int) (Cast (Type double) (Var x)))",
+            ),
             (
                 "(char *)(void *)p",
                 "(Cast (Ptr (Type void)) (Ptr (Type char)) (Var p))",

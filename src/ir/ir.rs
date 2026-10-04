@@ -1,13 +1,20 @@
 use std::fmt::Display;
 
 use crate::{
-    lexer::{language_features::OperatorTypes, lexer::TokenTypes},
+    lexer::{
+        language_features::{AssignmentTypes, OperatorTypes},
+        lexer::TokenTypes,
+    },
     parser::{
         expression_parser::ExprNode,
-        nodes::{AST, GlobalNode, StatementNode},
+        nodes::{
+            AST,
+            GlobalNode::{self, Initalizer},
+            StatementNode,
+        },
         type_parser::TypeNode,
     },
-    semantics::semantics::Semantics,
+    semantics::semantics::{SemanticInfo, Semantics, SymbolID},
 };
 
 struct Program(pub Vec<Module>);
@@ -208,11 +215,35 @@ impl Instruction {
     }
 }
 
+#[derive(Default)]
+struct VRegisterLookup {
+    lookup: Vec<VRegisterID>,
+}
+
+impl VRegisterLookup {
+    pub fn add_identifier(&mut self, symbol_id: SymbolID, register_id: VRegisterID) {
+        if self.lookup.len() <= symbol_id.0 as usize {
+            self.lookup.resize(symbol_id.0 as usize + 1, VRegisterID(0));
+        }
+
+        self.lookup[symbol_id.0 as usize] = register_id;
+    }
+
+    pub fn update_v_register(&mut self, symbol_id: SymbolID, register_id: VRegisterID) {
+        self.lookup[symbol_id.0 as usize] = register_id;
+    }
+
+    pub fn lookup_v_register(&mut self, symbol_id: SymbolID) -> VRegisterID {
+        self.lookup[symbol_id.0 as usize]
+    }
+}
+
 pub struct IRParser<'a> {
     ast: &'a AST,
     semantics: &'a Semantics,
     program: Program,
-    curr_ptr_id: VRegisterID,
+    curr_id: VRegisterID,
+    identifier_lookup: VRegisterLookup,
 }
 
 impl<'a> IRParser<'a> {
@@ -221,7 +252,8 @@ impl<'a> IRParser<'a> {
             ast,
             semantics,
             program: Program(Vec::new()),
-            curr_ptr_id: VRegisterID(0),
+            curr_id: VRegisterID(0),
+            identifier_lookup: VRegisterLookup::default(),
         }
     }
 
@@ -259,7 +291,11 @@ impl<'a> IRParser<'a> {
         output
     }
 
-    fn emit_binary_expr(&mut self, expr: &ExprNode, instructions: &mut Vec<Instruction>) {
+    fn emit_binary_expr(
+        &mut self,
+        expr: &ExprNode,
+        instructions: &mut Vec<Instruction>,
+    ) -> VRegisterID {
         let ExprNode::Binary {
             left,
             operator,
@@ -269,44 +305,50 @@ impl<'a> IRParser<'a> {
             unreachable!()
         };
 
-        self.emit_expr(left, instructions);
-        let left_ptr_id = self.curr_ptr_id;
-
-        self.emit_expr(right, instructions);
-        let right_ptr_id = self.curr_ptr_id;
+        let left_id = self.emit_expr(left, instructions);
+        let right_id = self.emit_expr(right, instructions);
 
         let result_instruction = match operator {
             TokenTypes::Operator(operator) => match operator {
                 OperatorTypes::Plus => Instruction::Add {
                     size: IRType::I32,
-                    left: RValue::Pointer(left_ptr_id),
-                    right: RValue::Pointer(right_ptr_id),
-                    v_register: self.curr_ptr_id.next(),
+                    left: RValue::Pointer(left_id),
+                    right: RValue::Pointer(right_id),
+                    v_register: self.curr_id.next(),
                 },
 
                 OperatorTypes::Minus => Instruction::Sub {
                     size: IRType::I32,
-                    left: RValue::Pointer(left_ptr_id),
-                    right: RValue::Pointer(right_ptr_id),
-                    v_register: self.curr_ptr_id.next(),
+                    left: RValue::Pointer(left_id),
+                    right: RValue::Pointer(right_id),
+                    v_register: self.curr_id.next(),
                 },
 
                 OperatorTypes::Star => Instruction::Mul {
                     size: IRType::I32,
-                    left: RValue::Pointer(left_ptr_id),
-                    right: RValue::Pointer(right_ptr_id),
-                    v_register: self.curr_ptr_id.next(),
+                    left: RValue::Pointer(left_id),
+                    right: RValue::Pointer(right_id),
+                    v_register: self.curr_id.next(),
                 },
 
                 _ => todo!(),
+            },
+            TokenTypes::Assignment(assignment_type) => match assignment_type {
+                _ => todo!(), // AssignmentTypes::SimpleAssignment => Instruction::Store { size: (), value: (), store_ptr: () }
             },
             _ => todo!(),
         };
 
         instructions.push(result_instruction);
+
+        self.curr_id
     }
 
-    fn emit_iteral_expr(&mut self, expr: &ExprNode, instructions: &mut Vec<Instruction>) {
+    fn emit_literal_expr(
+        &mut self,
+        expr: &ExprNode,
+        instructions: &mut Vec<Instruction>,
+    ) -> VRegisterID {
         let literal = match expr {
             ExprNode::Integer { num } => RValue::Literal(num.value as u64),
             _ => todo!(),
@@ -314,32 +356,48 @@ impl<'a> IRParser<'a> {
 
         let alloca = Instruction::Alloca {
             size: IRType::I32,
-            v_register: self.curr_ptr_id.next(),
+            v_register: self.curr_id.next(),
         };
 
         let store = Instruction::Store {
             size: IRType::I32,
             value: literal,
-            store_ptr: self.curr_ptr_id,
+            store_ptr: self.curr_id,
         };
 
         let load = Instruction::Load {
             size: IRType::I32,
-            value: self.curr_ptr_id,
-            v_register: self.curr_ptr_id.next(),
+            value: self.curr_id,
+            v_register: self.curr_id.next(),
         };
 
         instructions.push(alloca);
         instructions.push(store);
         instructions.push(load);
+
+        self.curr_id
     }
 
-    fn emit_expr(&mut self, expr: &ExprNode, instructions: &mut Vec<Instruction>) {
+    fn get_identifier_v_register(&mut self, expr: &ExprNode) -> VRegisterID {
+        let ExprNode::Identifier {
+            identifier: _,
+            semantic_info,
+        } = expr
+        else {
+            unreachable!();
+        };
+
+        self.identifier_lookup
+            .lookup_v_register(semantic_info.symbol_id.unwrap())
+    }
+
+    fn emit_expr(&mut self, expr: &ExprNode, instructions: &mut Vec<Instruction>) -> VRegisterID {
         match expr {
             ExprNode::Binary { .. } => self.emit_binary_expr(expr, instructions),
             ExprNode::Integer { .. } | ExprNode::Float { .. } | ExprNode::Char { .. } => {
-                self.emit_iteral_expr(expr, instructions)
+                self.emit_literal_expr(expr, instructions)
             }
+            ExprNode::Identifier { .. } => self.get_identifier_v_register(expr),
             _ => todo!(),
         }
     }
@@ -358,8 +416,56 @@ impl<'a> IRParser<'a> {
 
         instructions.push(Instruction::Return {
             size: IRType::I32,
-            value: RValue::Pointer(self.curr_ptr_id),
+            value: RValue::Pointer(self.curr_id),
         });
+    }
+
+    fn emit_initalizer(&mut self, initalizer: &GlobalNode, instructions: &mut Vec<Instruction>) {
+        let GlobalNode::Initalizer {
+            var_type,
+            r_value,
+            semantic_info,
+        } = initalizer
+        else {
+            unreachable!()
+        };
+        // SemanticInfo
+
+        if let Some(expr) = r_value {
+            self.emit_expr(expr, instructions);
+            let expression_register = self.curr_id;
+
+            instructions.push(Instruction::Alloca {
+                size: IRType::I32,
+                v_register: self.curr_id.next(),
+            });
+
+            instructions.push(Instruction::Store {
+                size: IRType::I32,
+                value: RValue::Pointer(expression_register),
+                store_ptr: self.curr_id,
+            });
+
+            instructions.push(Instruction::Load {
+                size: IRType::I32,
+                value: self.curr_id,
+                v_register: self.curr_id.next(),
+            });
+        } else {
+            instructions.push(Instruction::Alloca {
+                size: IRType::I32,
+                v_register: self.curr_id.next(),
+            });
+
+            instructions.push(Instruction::Load {
+                size: IRType::I32,
+                value: self.curr_id,
+                v_register: self.curr_id.next(),
+            });
+        }
+
+        self.identifier_lookup
+            .add_identifier(semantic_info.symbol_id.unwrap(), self.curr_id);
     }
 
     fn emit_statement_node(
@@ -373,8 +479,13 @@ impl<'a> IRParser<'a> {
                 .for_each(|x| self.emit_statement_node(x, instructions)),
 
             StatementNode::Return { .. } => self.emit_return(statement, instructions),
-
-            StatementNode::Expression(expr) => self.emit_expr(expr, instructions),
+            StatementNode::General(general_node) => match **general_node {
+                GlobalNode::Initalizer { .. } => self.emit_initalizer(general_node, instructions),
+                _ => todo!(),
+            },
+            StatementNode::Expression(expr) => {
+                self.emit_expr(expr, instructions);
+            }
 
             _ => todo!(),
         }

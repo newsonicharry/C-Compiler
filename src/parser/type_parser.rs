@@ -6,7 +6,7 @@ use crate::parser::nodes::IndentDisplay;
 use crate::parser::parser::Parser;
 use crate::parser::simple_type::SimpleType;
 use crate::parser::tag_types::helper::TagTypeKind;
-use crate::semantics::semantics::TypeId;
+use crate::semantics::semantics::TypeID;
 use std::fmt::Display;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -38,7 +38,7 @@ pub enum TypeNode {
         kind: TagTypeKind,
         name: String,
         qualifiers: Vec<DataTypes>,
-        type_id: Option<TypeId>,
+        type_id: Option<TypeID>,
     },
 
     Function {

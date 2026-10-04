@@ -4,8 +4,8 @@ use crate::parser::{jump_label::JumpLabel, tag_types::helper::TagTypeData, type_
 
 #[derive(Clone, Default, Debug, PartialEq)]
 pub struct SemanticInfo {
-    type_id: Option<TypeId>,
-    symbol_id: Option<SymbolId>,
+    pub type_id: Option<TypeID>,
+    pub symbol_id: Option<SymbolID>,
 }
 
 macro_rules! create_id {
@@ -21,9 +21,9 @@ macro_rules! create_id {
     };
 }
 
-create_id!(SymbolId);
+create_id!(SymbolID);
 create_id!(ScopeId);
-create_id!(TypeId);
+create_id!(TypeID);
 
 #[derive(Clone, Debug)]
 pub enum SymbolKind {
@@ -43,7 +43,8 @@ pub enum SymbolKind {
 pub struct Symbol {
     pub name: String,
     pub kind: SymbolKind,
-    pub type_id: TypeId,
+    pub type_id: TypeID,
+    pub symbol_id: SymbolID,
 }
 
 #[derive(Default, Debug)]
@@ -52,21 +53,28 @@ struct SymbolTable {
 }
 
 impl SymbolTable {
-    pub fn next_symbol_id(&self) -> SymbolId {
-        SymbolId(self.table.len() as u32)
+    pub fn next_symbol_id(&self) -> SymbolID {
+        SymbolID(self.table.len() as u32)
     }
 
-    pub fn add_symbol(&mut self, name: &str, kind: SymbolKind, type_id: TypeId) {
+    pub fn add_symbol(
+        &mut self,
+        name: &str,
+        kind: SymbolKind,
+        type_id: TypeID,
+        symbol_id: SymbolID,
+    ) {
         let symbol = Symbol {
             name: name.to_string(),
             kind,
             type_id,
+            symbol_id,
         };
 
         self.table.push(symbol);
     }
 
-    fn lookup(&self, symbol_id: SymbolId) -> &Symbol {
+    fn lookup(&self, symbol_id: SymbolID) -> &Symbol {
         &self.table[symbol_id.as_usize()]
     }
 }
@@ -92,18 +100,18 @@ impl TypeTable {
     // TypeId(self.table.len() as u32)
     // }
 
-    pub fn add_type(&mut self, type_value: &TypeTableValue) -> TypeId {
+    pub fn add_type(&mut self, type_value: &TypeTableValue) -> TypeID {
         for (i, curr_type) in self.table.iter().enumerate() {
             if curr_type == type_value {
-                return TypeId(i as u32);
+                return TypeID(i as u32);
             }
         }
 
         self.table.push(type_value.clone());
-        TypeId(self.table.len() as u32)
+        TypeID(self.table.len() as u32 - 1)
     }
 
-    fn lookup(&self, type_id: TypeId) -> &TypeTableValue {
+    fn lookup(&self, type_id: TypeID) -> &TypeTableValue {
         &self.table[type_id.as_usize()]
     }
 }
@@ -118,7 +126,7 @@ pub enum Namespace {
 
 #[derive(Default, Debug)]
 struct ScopeTable {
-    table: HashMap<(Namespace, String), SymbolId>,
+    table: HashMap<(Namespace, String), SymbolID>,
 
     scope_id: ScopeId,
     parent_id: Option<ScopeId>,
@@ -139,7 +147,7 @@ impl ScopeTable {
         &mut self,
         namespace: &Namespace,
         name: &str,
-        symbol_id: SymbolId,
+        symbol_id: SymbolID,
     ) -> Result<(), String> {
         let key = (namespace.clone(), name.to_string());
 
@@ -167,7 +175,7 @@ impl ScopeTable {
         self.children_id.is_empty()
     }
 
-    fn lookup(&self, namespace: &Namespace, name: &str) -> Option<SymbolId> {
+    fn lookup(&self, namespace: &Namespace, name: &str) -> Option<SymbolID> {
         self.table.get(&(*namespace, name.to_string())).cloned()
     }
 }
@@ -269,7 +277,8 @@ impl Semantics {
 
         let type_id = self.types.add_type(type_value);
 
-        self.symbols.add_symbol(&name, symbol_kind, type_id);
+        self.symbols
+            .add_symbol(&name, symbol_kind, type_id, symbol_id);
 
         let semantic_info = SemanticInfo {
             type_id: Some(type_id),
