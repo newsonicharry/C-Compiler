@@ -97,7 +97,7 @@ enum Module {
 }
 
 enum RValue {
-    Pointer(VRegisterID),
+    VRegister(VRegisterID),
     Literal(u64),
     Void,
 }
@@ -105,7 +105,7 @@ enum RValue {
 impl Display for RValue {
     fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let output = match self {
-            Self::Pointer(id) => format!("%{}", id.0),
+            Self::VRegister(id) => format!("%{}", id.0),
             Self::Literal(value) => value.to_string(),
             Self::Void => String::new(),
         };
@@ -130,7 +130,7 @@ enum Instruction {
     },
     Load {
         size: IRType,
-        value: VRegisterID,
+        value_ptr: VRegisterID,
         v_register: VRegisterID,
     },
     Add {
@@ -151,9 +151,6 @@ enum Instruction {
         right: RValue,
         v_register: VRegisterID,
     },
-    Branch,
-    AllocaConstArray {},
-    AllocaVLAArray {},
 }
 
 impl Instruction {
@@ -182,7 +179,7 @@ impl Instruction {
 
             Self::Load {
                 size,
-                value,
+                value_ptr: value,
                 v_register,
             } => format!(
                 "  %{v_register} = load {size}, ptr %{value}, align {}\n",
@@ -215,25 +212,32 @@ impl Instruction {
     }
 }
 
+#[derive(Default, Copy, Clone)]
+struct AllocationInfo {
+    loaded_id: VRegisterID,
+    allocated_id: VRegisterID,
+}
+
 #[derive(Default)]
 struct VRegisterLookup {
-    lookup: Vec<VRegisterID>,
+    lookup: Vec<AllocationInfo>,
 }
 
 impl VRegisterLookup {
-    pub fn add_identifier(&mut self, symbol_id: SymbolID, register_id: VRegisterID) {
+    pub fn add_identifier(&mut self, symbol_id: SymbolID, allocation: AllocationInfo) {
         if self.lookup.len() <= symbol_id.0 as usize {
-            self.lookup.resize(symbol_id.0 as usize + 1, VRegisterID(0));
+            self.lookup
+                .resize(symbol_id.0 as usize + 1, AllocationInfo::default());
         }
 
-        self.lookup[symbol_id.0 as usize] = register_id;
+        self.lookup[symbol_id.0 as usize] = allocation;
     }
 
     pub fn update_v_register(&mut self, symbol_id: SymbolID, register_id: VRegisterID) {
-        self.lookup[symbol_id.0 as usize] = register_id;
+        self.lookup[symbol_id.0 as usize].loaded_id = register_id;
     }
 
-    pub fn lookup_v_register(&mut self, symbol_id: SymbolID) -> VRegisterID {
+    pub fn lookup_v_register(&mut self, symbol_id: SymbolID) -> AllocationInfo {
         self.lookup[symbol_id.0 as usize]
     }
 }
@@ -291,6 +295,59 @@ impl<'a> IRParser<'a> {
         output
     }
 
+    fn emit_assignment_expr(
+        &mut self,
+        left: &ExprNode,
+        right: &ExprNode,
+        assignment: &AssignmentTypes,
+        instructions: &mut Vec<Instruction>,
+    ) -> VRegisterID {
+        let ExprNode::Identifier { semantic_info, .. } = left else {
+            unreachable!()
+        };
+
+        let right_id = self.emit_expr(right, instructions);
+
+        let alloc_info = self
+            .identifier_lookup
+            .lookup_v_register(semantic_info.symbol_id.unwrap());
+
+        match assignment {
+            AssignmentTypes::SimpleAssignment => {
+                instructions.push(Instruction::Store {
+                    size: IRType::I32,
+                    value: RValue::VRegister(right_id),
+                    store_ptr: alloc_info.allocated_id,
+                });
+            }
+
+            AssignmentTypes::MultiAssignment => {
+                instructions.push(Instruction::Mul {
+                    size: IRType::I32,
+                    left: RValue::VRegister(alloc_info.loaded_id),
+                    right: RValue::VRegister(right_id),
+                    v_register: self.curr_id.next(),
+                });
+
+                instructions.push(Instruction::Store {
+                    size: IRType::I32,
+                    value: RValue::VRegister(self.curr_id),
+                    store_ptr: alloc_info.allocated_id,
+                });
+            }
+
+            _ => todo!(),
+        };
+
+        instructions.push(Instruction::Load {
+            size: IRType::I32,
+            value_ptr: alloc_info.allocated_id,
+            v_register: self.curr_id.next(),
+        });
+
+        self.curr_id
+    }
+
     fn emit_binary_expr(
         &mut self,
         expr: &ExprNode,
@@ -305,6 +362,10 @@ impl<'a> IRParser<'a> {
             unreachable!()
         };
 
+        if let TokenTypes::Assignment(assignment) = operator {
+            return self.emit_assignment_expr(left, right, assignment, instructions);
+        }
+
         let left_id = self.emit_expr(left, instructions);
         let right_id = self.emit_expr(right, instructions);
 
@@ -312,30 +373,28 @@ impl<'a> IRParser<'a> {
             TokenTypes::Operator(operator) => match operator {
                 OperatorTypes::Plus => Instruction::Add {
                     size: IRType::I32,
-                    left: RValue::Pointer(left_id),
-                    right: RValue::Pointer(right_id),
+                    left: RValue::VRegister(left_id),
+                    right: RValue::VRegister(right_id),
                     v_register: self.curr_id.next(),
                 },
 
                 OperatorTypes::Minus => Instruction::Sub {
                     size: IRType::I32,
-                    left: RValue::Pointer(left_id),
-                    right: RValue::Pointer(right_id),
+                    left: RValue::VRegister(left_id),
+                    right: RValue::VRegister(right_id),
                     v_register: self.curr_id.next(),
                 },
 
                 OperatorTypes::Star => Instruction::Mul {
                     size: IRType::I32,
-                    left: RValue::Pointer(left_id),
-                    right: RValue::Pointer(right_id),
+                    left: RValue::VRegister(left_id),
+                    right: RValue::VRegister(right_id),
                     v_register: self.curr_id.next(),
                 },
 
                 _ => todo!(),
             },
-            TokenTypes::Assignment(assignment_type) => match assignment_type {
-                _ => todo!(), // AssignmentTypes::SimpleAssignment => Instruction::Store { size: (), value: (), store_ptr: () }
-            },
+
             _ => todo!(),
         };
 
@@ -367,7 +426,7 @@ impl<'a> IRParser<'a> {
 
         let load = Instruction::Load {
             size: IRType::I32,
-            value: self.curr_id,
+            value_ptr: self.curr_id,
             v_register: self.curr_id.next(),
         };
 
@@ -389,6 +448,7 @@ impl<'a> IRParser<'a> {
 
         self.identifier_lookup
             .lookup_v_register(semantic_info.symbol_id.unwrap())
+            .loaded_id
     }
 
     fn emit_expr(&mut self, expr: &ExprNode, instructions: &mut Vec<Instruction>) -> VRegisterID {
@@ -416,7 +476,7 @@ impl<'a> IRParser<'a> {
 
         instructions.push(Instruction::Return {
             size: IRType::I32,
-            value: RValue::Pointer(self.curr_id),
+            value: RValue::VRegister(self.curr_id),
         });
     }
 
@@ -429,43 +489,56 @@ impl<'a> IRParser<'a> {
         else {
             unreachable!()
         };
-        // SemanticInfo
+
+        let alloc_register;
+        let load_register;
 
         if let Some(expr) = r_value {
             self.emit_expr(expr, instructions);
+
             let expression_register = self.curr_id;
+            alloc_register = self.curr_id.next();
+            load_register = self.curr_id.next();
 
             instructions.push(Instruction::Alloca {
                 size: IRType::I32,
-                v_register: self.curr_id.next(),
+                v_register: alloc_register,
             });
 
             instructions.push(Instruction::Store {
                 size: IRType::I32,
-                value: RValue::Pointer(expression_register),
-                store_ptr: self.curr_id,
+                value: RValue::VRegister(expression_register),
+                store_ptr: alloc_register,
             });
 
             instructions.push(Instruction::Load {
                 size: IRType::I32,
-                value: self.curr_id,
-                v_register: self.curr_id.next(),
+                value_ptr: alloc_register,
+                v_register: load_register,
             });
         } else {
+            alloc_register = self.curr_id.next();
+            load_register = self.curr_id.next();
+
             instructions.push(Instruction::Alloca {
                 size: IRType::I32,
-                v_register: self.curr_id.next(),
+                v_register: alloc_register,
             });
 
             instructions.push(Instruction::Load {
                 size: IRType::I32,
-                value: self.curr_id,
-                v_register: self.curr_id.next(),
+                value_ptr: self.curr_id,
+                v_register: load_register,
             });
         }
 
+        let new_identifier = AllocationInfo {
+            loaded_id: load_register,
+            allocated_id: alloc_register,
+        };
+
         self.identifier_lookup
-            .add_identifier(semantic_info.symbol_id.unwrap(), self.curr_id);
+            .add_identifier(semantic_info.symbol_id.unwrap(), new_identifier);
     }
 
     fn emit_statement_node(

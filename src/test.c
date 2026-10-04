@@ -1,9 +1,10 @@
 
 
 int main() {
-  int a = 10, b = 20;
-  a = b;
-
+  // int a = 10, b = 20;
+  // a = b;
+  int a = 10;
+  a *= 5;
   return a;
 }
 // int a = 5;
