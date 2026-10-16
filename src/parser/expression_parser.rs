@@ -886,7 +886,8 @@ mod tests {
             ),
             (
                 "(char *)(void *)p",
-                "(Cast (Ptr (Type void)) (Ptr (Type char)) (Var p))",
+                "(Cast (Ptr (Type char))
+                     (Cast (Ptr (Type void)) (Var p)))",
             ),
             (
                 "(int)(a+b)",

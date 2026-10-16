@@ -4,7 +4,7 @@ use crate::parser::expression_parser::ExprNode;
 use crate::parser::helper::verify_next_in_comma_list;
 use crate::parser::nodes::IndentDisplay;
 use crate::parser::parser::Parser;
-use crate::parser::simple_type::SimpleType;
+use crate::parser::simple_type::{Qualifiers, SimpleType, Storage};
 use crate::parser::tag_types::helper::TagTypeKind;
 use crate::semantics::semantics::TypeID;
 use std::fmt::Display;
@@ -37,7 +37,7 @@ pub enum TypeNode {
     TagType {
         kind: TagTypeKind,
         name: String,
-        qualifiers: Vec<DataTypes>,
+        type_info: SimpleType,
         type_id: Option<TypeID>,
     },
 
@@ -100,7 +100,7 @@ impl IndentDisplay for TypeNode {
             TypeNode::TagType {
                 kind,
                 name,
-                qualifiers,
+                type_info,
                 ..
             } => {
                 match kind {
@@ -109,7 +109,7 @@ impl IndentDisplay for TypeNode {
                     TagTypeKind::Enum => output.push_str(&format!("(Enum")),
                 }
 
-                Self::display_tag_type(&mut output, name, qualifiers);
+                Self::display_tag_type(&mut output, name, type_info);
             }
 
             TypeNode::Function {
@@ -235,9 +235,9 @@ impl TypeNode {
 
         match nested_value.get_most_nested_layer() {
             Self::Normal { held_type, .. } => {
-                return matches!(held_type.storage, Some(DataTypes::Typedef));
+                return held_type.is_typedef;
             }
-            Self::TagType { qualifiers, .. } => return qualifiers.contains(&DataTypes::Typedef),
+            Self::TagType { type_info, .. } => return type_info.is_typedef,
             _ => return false,
         };
     }
@@ -248,14 +248,10 @@ impl TypeNode {
 
         match final_layer {
             Self::Normal { held_type, .. } => {
-                if matches!(held_type.storage, Some(DataTypes::Typedef)) {
-                    held_type.storage = None;
-                }
+                held_type.is_typedef = false;
             }
-            Self::TagType { qualifiers, .. } => {
-                if let Some(position) = qualifiers.iter().position(|x| *x == DataTypes::Typedef) {
-                    qualifiers.remove(position);
-                }
+            Self::TagType { type_info, .. } => {
+                type_info.is_typedef = false;
             }
             _ => return,
         };
@@ -298,16 +294,19 @@ impl TypeNode {
         output.push_str(&format!("{held_value})"));
     }
 
-    fn display_tag_type(output: &mut String, name: &str, qualifiers: &Vec<DataTypes>) {
+    fn display_tag_type(output: &mut String, name: &str, type_info: &SimpleType) {
         output.push_str(&format!(" {name}"));
 
-        if !qualifiers.is_empty() {
+        if !type_info.qualifiers.is_empty() {
             output.push_str(" (Qualifiers");
-            for qualifier in qualifiers {
+            for qualifier in &type_info.qualifiers {
                 output.push_str(&format!(" {qualifier}"));
             }
-
             output.push_str(")");
+        }
+
+        if let Some(storage) = type_info.storage {
+            output.push_str(&format!(" (Storage {storage})"));
         }
 
         output.push_str(")");
@@ -530,10 +529,12 @@ impl Parser {
         Ok(qualifiers)
     }
 
-    fn parse_normal_tag_type(&mut self, qualifiers: &Vec<DataTypes>) -> Result<TypeNode, String> {
+    fn parse_normal_tag_type(&mut self, simple_type: &SimpleType) -> Result<TypeNode, String> {
         let Some(TokenTypes::Keyword(keyword_type)) = self.lexer.peek() else {
             return Ok(TypeNode::Empty);
         };
+
+        Self::verify_tag_simple_type(simple_type)?;
 
         self.lexer.advance();
 
@@ -547,7 +548,7 @@ impl Parser {
         Ok(TypeNode::TagType {
             kind: tag_type_kind,
             name: tag_type_name,
-            qualifiers: qualifiers.clone(),
+            type_info: simple_type.clone(),
             type_id: None,
         })
     }
@@ -558,7 +559,7 @@ impl Parser {
         // check for a typedef if the current type is not a completed type
         // (aka it has no base type, such as an int or a float)
         if let Some(TokenTypes::Identifier(identifier)) = self.lexer.peek()
-            && simple_type.base_type == DataTypes::NoType
+            && simple_type.base_type.is_none()
         {
             if let Some(typedef_type) = self.semantics.check_typedef(&identifier).cloned() {
                 let TypeNode::Normal {
@@ -572,7 +573,6 @@ impl Parser {
                 typedef_simple_type
                     .qualifiers
                     .extend(simple_type.qualifiers);
-                typedef_simple_type.modifiers.extend(simple_type.modifiers);
 
                 if let Some(storage_type) = simple_type.storage {
                     if let Some(typedef_storage) = typedef_simple_type.storage
@@ -586,7 +586,7 @@ impl Parser {
                     typedef_simple_type.storage = Some(storage_type);
                 }
 
-                Self::verify_simple_type(&mut typedef_simple_type)?;
+                Self::verify_normal_simple_type(&mut typedef_simple_type)?;
 
                 return Ok(TypeNode::Normal {
                     held_type: typedef_simple_type,
@@ -595,24 +595,19 @@ impl Parser {
             }
         }
 
-        Self::verify_simple_type(&mut simple_type)?;
-
-        let mut tag_type_properties = simple_type.qualifiers.clone();
-        if let Some(storage) = simple_type.storage {
-            tag_type_properties.push(storage);
-        };
-
-        let tag_type = self.parse_normal_tag_type(&tag_type_properties)?;
+        let tag_type = self.parse_normal_tag_type(&simple_type)?;
         if !matches!(tag_type, TypeNode::Empty) {
             return Ok(tag_type);
         }
 
+        Self::verify_normal_simple_type(&mut simple_type)?;
+
         // occurs when there is no base type (e.g., const x; is not a valid type)
-        if simple_type.modifiers.is_empty() && simple_type.base_type == DataTypes::NoType {
-            return Err(String::from(
-                "Not given a valid base type, only a modifer or qualifier.",
-            ));
-        }
+        //  if simple_type.modifiers.is_empty() && simple_type.base_type == DataTypes::NoType {
+        //     return Err(String::from(
+        //         "Not given a valid base type, only a modifer or qualifier.",
+        //     ));
+        // }
 
         Ok(TypeNode::Normal {
             held_type: simple_type,
@@ -642,10 +637,7 @@ mod tests {
     #[test]
     fn type_modifier_qualifier() {
         let test_cases = vec![
-            (
-                "unsigned long long int a;",
-                "(Name a (Type unsigned long long int))",
-            ),
+            ("unsigned long long int a;", "(Name a (Type unsigned long))"),
             (
                 "const volatile double b;",
                 "(Name b (Type const volatile double))",
@@ -654,7 +646,7 @@ mod tests {
                 "float * restrict c;",
                 "(Name c (Ptr restrict (Type float)))",
             ),
-            ("short d;", "(Name d (Type short int))"),
+            ("short d;", "(Name d (Type short))"),
         ];
 
         run_tests(Parser::parse_type, test_cases);

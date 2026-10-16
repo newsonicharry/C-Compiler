@@ -14,7 +14,10 @@ use crate::{
         },
         type_parser::TypeNode,
     },
-    semantics::semantics::{SemanticInfo, Semantics, SymbolID},
+    semantics::{
+        // analysis::get_type_info,
+        semantics::{SemanticInfo, Semantics, SymbolID},
+    },
 };
 
 struct Program(pub Vec<Module>);
@@ -151,6 +154,7 @@ enum Instruction {
         right: RValue,
         v_register: VRegisterID,
     },
+    Call {},
 }
 
 impl Instruction {
@@ -598,3 +602,16 @@ impl<'a> IRParser<'a> {
         self.program.0.push(func_def);
     }
 }
+
+/* fn lower_type(type_node: &TypeNode) -> IRType {
+    match type_node {
+        TypeNode::Variable { held_value, .. } => lower_type(held_value),
+        TypeNode::Pointer { .. } => IRType::Ptr,
+        TypeNode::Normal { held_type, .. } => match get_type_info(held_type) {
+            (1, false, _) => IRType::I1,
+            _ => todo!(),
+        },
+
+        _ => todo!(),
+    }
+} */

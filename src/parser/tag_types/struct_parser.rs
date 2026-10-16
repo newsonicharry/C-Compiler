@@ -330,14 +330,14 @@ mod tests {
                 (Variable (Name p (Struct Point (Qualifiers const)))
                     (AggInit
                         (InitElement(Expr (Num 1)))))
-                    
+
                 ",
             ),
             (
                 "struct Point{ int x; } volatile p;",
                 "
                 (Struct Point (Members (Member (Name x (Type int)))))
-                (Variable (Name p (Struct Point (Qualifiers volatile))))   
+                (Variable (Name p (Struct Point (Qualifiers volatile))))
                 ",
             ),
             (
@@ -356,7 +356,7 @@ mod tests {
                 "struct Point{ int x; } *restrict p;",
                 "
                 (Struct Point (Members (Member (Name x (Type int)))))
-                (Variable (Name p (Ptr restrict (Struct Point))))    
+                (Variable (Name p (Ptr restrict (Struct Point))))
                 ",
             ),
             (
@@ -373,14 +373,14 @@ mod tests {
                 "extern struct Point{ int x; } p;",
                 "
                 (Struct Point (Members (Member (Name x (Type int)))))
-                (Variable (Name p (Struct Point (Qualifiers extern))))
+                (Variable (Name p (Struct Point (Storage extern))))
                 ",
             ),
             (
                 "struct point { int x; } (*fp)(void);",
                 "
                 (Struct point (Members (Member (Name x (Type int)))))
-                (Variable (Name fp (FuncPtr (Params (Type void)) (Struct point))))                    
+                (Variable (Name fp (FuncPtr (Params (Type void)) (Struct point))))
                 ",
             ),
         ];

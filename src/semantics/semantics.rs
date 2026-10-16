@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::format, thread::Scope};
+use std::collections::HashMap;
 
 use crate::parser::{jump_label::JumpLabel, tag_types::helper::TagTypeData, type_parser::TypeNode};
 

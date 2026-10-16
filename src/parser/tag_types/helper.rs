@@ -4,6 +4,7 @@ use crate::parser::expression_parser::ExprNode;
 use crate::parser::helper::pretty_clean_string;
 use crate::parser::nodes::{GlobalNode, IndentDisplay};
 use crate::parser::parser::Parser;
+use crate::parser::simple_type::{Qualifiers, SimpleType};
 use crate::parser::type_parser::TypeNode;
 use crate::semantics::semantics::{SemanticInfo, SymbolKind, TypeTableValue};
 
@@ -119,7 +120,7 @@ pub struct TagTypeData {
 }
 
 impl TagTypeData {
-    pub fn as_type(&self, properties: &Vec<DataTypes>) -> TypeNode {
+    pub fn as_type(&self, simple_type: &SimpleType) -> TypeNode {
         if self.name.is_none() {
             panic!("TagTypeData::as_type can only be called after tag type is given a name")
         }
@@ -129,7 +130,7 @@ impl TagTypeData {
         TypeNode::TagType {
             kind: self.kind.clone(),
             name: name.to_string(),
-            qualifiers: properties.clone(),
+            type_info: simple_type.clone(),
             type_id: None,
         }
     }
@@ -181,32 +182,10 @@ pub enum TagKeywordUsage {
 impl Parser {
     /// Parses the qualifiers of a tag type after its been defined
     /// (e.g struct Point{int x;} const volatile p, q;) where the const volatile portion is parsed
-    fn parse_tag_type_qualifiers(&mut self) -> Result<Vec<DataTypes>, String> {
-        let mut qualifiers = Vec::new();
-        while let Some(TokenTypes::DataType(data_type)) = self.lexer.peek() {
-            if ({
-                let this = &data_type;
-                match *this {
-                    //  auto is not technically a qualifier but we assume it is here
-                    DataTypes::Const
-                    | DataTypes::Volatile
-                    | DataTypes::Restrict
-                    | DataTypes::Auto => true,
-                    _ => false,
-                }
-            }) || data_type.is_storage_specifier()
-            {
-                qualifiers.push(data_type);
-                self.lexer.advance();
-                continue;
-            }
-
-            return Err(format!(
-                "Expected data type after tag type to be a qualifier, got {data_type}"
-            ));
-        }
-
-        Ok(qualifiers)
+    fn parse_tag_type_qualifiers(&mut self) -> Result<SimpleType, String> {
+        let mut simple_type = self.parse_simple_type()?;
+        Self::verify_tag_simple_type(&mut simple_type)?;
+        Ok(simple_type)
     }
 
     /// Determines how the tag type keyword is being used
@@ -486,18 +465,30 @@ impl Parser {
     {
         let mut tag_type_and_vars = Vec::new();
 
-        let mut var_qualifiers = self.parse_tag_type_qualifiers()?;
-
+        let mut var_type_info = self.parse_tag_type_qualifiers()?;
         let mut defined_tag_type = parse_definition(self)?;
 
-        var_qualifiers.extend(self.parse_tag_type_qualifiers()?);
+        let added_type_info = self.parse_tag_type_qualifiers()?;
+        var_type_info.qualifiers.extend(added_type_info.qualifiers);
+
+        if added_type_info.storage.is_some()
+            && var_type_info.storage.is_some()
+            && added_type_info.storage != var_type_info.storage
+        {
+            return Err(format!("Multiple storage definitions are not allowed"));
+        }
+        if var_type_info.storage.is_none() {
+            var_type_info.storage = added_type_info.storage;
+        }
+
+        Self::verify_tag_simple_type(&var_type_info)?;
 
         let generated_new_name = defined_tag_type.name.is_none();
         if generated_new_name {
             defined_tag_type.name = Some(self.semantics.generate_new_name());
         }
 
-        let type_node = defined_tag_type.as_type(&var_qualifiers);
+        let type_node = defined_tag_type.as_type(&var_type_info);
 
         let defined_vars: Vec<GlobalNode> = self.parse_vars_after_type::<true>(&type_node)?;
 
@@ -505,19 +496,7 @@ impl Parser {
             return Ok(vec![]);
         }
 
-        let storage_class_specifiers: Vec<DataTypes> = var_qualifiers
-            .iter()
-            .filter(|x| x.is_storage_specifier())
-            .map(|x| *x)
-            .collect();
-
-        if storage_class_specifiers.len() > 1 {
-            return Err(String::from(
-                "Disallowed tag type storage class specifier combination",
-            ));
-        }
-
-        if storage_class_specifiers.contains(&DataTypes::Typedef) {
+        if var_type_info.is_typedef {
             self.update_tag_type_typedef(&defined_vars, &defined_tag_type);
 
             // for typedef in defined_vars {

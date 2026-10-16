@@ -113,7 +113,7 @@ impl Parser {
             &name,
             &TypeTableValue::Identifier(signature),
             SymbolKind::Typedef,
-        );
+        )?;
 
         Ok(true)
     }
@@ -145,13 +145,13 @@ impl Parser {
         };
 
         // the value the semantics uses is only the raw type, without the original typedef property
-        // or the orginial variable name
+        // or the original variable name
         held_value.remove_typedef_property();
         self.semantics.add_identifier(
             &name,
             &TypeTableValue::Identifier(held_value),
             SymbolKind::Typedef,
-        );
+        )?;
 
         // let semantics_type = IdentifierType::Typedef(*held_value.clone());
 
@@ -203,7 +203,7 @@ mod tests {
         let result = "
             (Variable (Name v1 (Type int)) (Num 1))
             (Variable (Name v2 (Type unsigned int)) (Num 2u))
-            (Variable (Name v3 (Type unsigned long int)) (Num 4ul))
+            (Variable (Name v3 (Type unsigned long)) (Num 4ul))
             (Variable (Name v4 (Type unsigned char)) (Num 255))
             (Variable (Name v5 (Type long double)) (Num 3.5l))
         ";

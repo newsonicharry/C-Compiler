@@ -188,10 +188,9 @@ const TYPE_INFO: [(DataTypes, u16, bool); 7] = [
     (DataTypes::Double, 64, true),
 ];
 
-fn get_type_info(simple_type: &SimpleType) -> (u16, bool, bool) {
+/* pub fn get_type_info(simple_type: &SimpleType) -> (u16, bool, bool) {
     let mut bits = 0;
     let mut is_floating_point = false;
-    let is_unsigned = simple_type.modifiers.contains(&DataTypes::Unsigned);
 
     for (data_type, num_bits, is_floating) in TYPE_INFO {
         if simple_type.base_type == data_type || simple_type.modifiers.contains(&data_type) {
@@ -213,10 +212,10 @@ fn get_type_info(simple_type: &SimpleType) -> (u16, bool, bool) {
         panic!()
     }
 
-    (bits, is_floating_point, is_unsigned)
-}
+    (bits, is_floating_point, simple_type)
+} */
 
-fn conversion_rules<'a>(first_type: &'a SimpleType, second_type: &'a SimpleType) -> &'a SimpleType {
+/* fn conversion_rules<'a>(first_type: &'a SimpleType, second_type: &'a SimpleType) -> &'a SimpleType {
     let (first_bits, first_float, first_unsigned) = get_type_info(first_type);
     let (second_bits, second_float, second_unsigned) = get_type_info(second_type);
 
@@ -242,4 +241,4 @@ fn conversion_rules<'a>(first_type: &'a SimpleType, second_type: &'a SimpleType)
     }
 
     second_type
-}
+} */
