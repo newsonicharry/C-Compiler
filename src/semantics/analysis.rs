@@ -5,7 +5,7 @@ use crate::{
     parser::{
         expression_parser::ExprNode,
         nodes::{AST, GlobalNode, StatementNode},
-        simple_type::SimpleType,
+        simple_type::{BaseType, Signedness, SimpleType},
         type_parser::TypeNode,
     },
     semantics::semantics::{Namespace, ScopeId, Semantics, SymbolKind, TypeTableValue},
@@ -83,6 +83,40 @@ impl<'a> SemanticAnalysis<'a> {
         Ok(())
     }
 
+    // fn update_binary_expr_cast(&mut self, expr: &mut ExprNode) {
+    //     todo!()
+    // }
+
+    fn get_expr_type(&self, expr: &ExprNode) -> SimpleType {
+        match expr {
+            ExprNode::Cast { cast_type, .. } => match &**cast_type {
+                TypeNode::Normal { held_type, .. } => held_type.clone(),
+                _ => todo!(),
+            },
+            ExprNode::Integer { num } => {
+                let signedness = if num.storage.is_unsigned {
+                    Signedness::Unsigned
+                } else {
+                    Signedness::Signed
+                };
+
+                if num.storage.is_long || num.storage.is_long_long {
+                    return init_new_simple_type(BaseType::Long, signedness);
+                } else if num.storage.is_float {
+                    return init_new_simple_type(BaseType::Float, signedness);
+                } else if num.storage.is_double {
+                    return init_new_simple_type(BaseType::Double, signedness);
+                } else if num.storage.is_long_double {
+                    return init_new_simple_type(BaseType::LongDouble, signedness);
+                } else {
+                    return init_new_simple_type(BaseType::Int, signedness);
+                }
+            }
+            // ExprNode::Identifier { identifier, semantic_info }
+            _ => panic!("type not found"),
+        }
+    }
+
     fn update_expr_node(&mut self, expr: &mut ExprNode) -> Result<(), String> {
         match expr {
             ExprNode::Binary {
@@ -92,6 +126,11 @@ impl<'a> SemanticAnalysis<'a> {
             } => {
                 self.update_expr_node(left)?;
                 self.update_expr_node(right)?;
+
+                let cast = conversion_rules(&self.get_expr_type(left), &self.get_expr_type(right));
+
+                left.add_cast(&cast);
+                right.add_cast(&cast);
             }
             ExprNode::Identifier {
                 identifier,
@@ -106,6 +145,7 @@ impl<'a> SemanticAnalysis<'a> {
 
                 semantic_info.symbol_id = Some(symbol.symbol_id);
             }
+
             _ => {}
         };
 
@@ -163,6 +203,10 @@ impl<'a> SemanticAnalysis<'a> {
             unreachable!();
         };
 
+        let TypeNode::Normal { held_type, .. } = &*held_value.clone() else {
+            todo!()
+        };
+
         *semantic_info = self.semantics.add_identifier(
             &name,
             &TypeTableValue::Identifier(held_value),
@@ -171,6 +215,7 @@ impl<'a> SemanticAnalysis<'a> {
 
         if let Some(r_value) = r_value {
             self.update_expr_node(r_value)?;
+            r_value.add_cast(held_type);
         }
 
         Ok(())
@@ -178,67 +223,52 @@ impl<'a> SemanticAnalysis<'a> {
     }
 }
 
-const TYPE_INFO: [(DataTypes, u16, bool); 7] = [
-    (DataTypes::Int, 32, false),
-    (DataTypes::_Bool, 8, false),
-    (DataTypes::Char, 8, false),
-    (DataTypes::Short, 16, false),
-    (DataTypes::Long, 64, false),
-    (DataTypes::Float, 32, true),
-    (DataTypes::Double, 64, true),
-];
-
-/* pub fn get_type_info(simple_type: &SimpleType) -> (u16, bool, bool) {
-    let mut bits = 0;
-    let mut is_floating_point = false;
-
-    for (data_type, num_bits, is_floating) in TYPE_INFO {
-        if simple_type.base_type == data_type || simple_type.modifiers.contains(&data_type) {
-            bits = num_bits;
-        }
-
-        if is_floating {
-            is_floating_point = true;
-        }
+fn init_new_simple_type(base_type: BaseType, signedness: Signedness) -> SimpleType {
+    SimpleType {
+        base_type: Some(base_type),
+        storage: None,
+        signedness,
+        qualifiers: Vec::new(),
+        is_inline_function: false,
+        is_typedef: false,
     }
+}
 
-    // accounts for a long double (which is technically 80 bits), but padded to 128
-    if bits == 64 && is_floating_point {
-        bits = 128;
-    }
-
-    // pretty sure this is impossible to trigger but just in case
-    if bits == 0 {
-        panic!()
-    }
-
-    (bits, is_floating_point, simple_type)
-} */
-
-/* fn conversion_rules<'a>(first_type: &'a SimpleType, second_type: &'a SimpleType) -> &'a SimpleType {
+fn conversion_rules(first_type: &SimpleType, second_type: &SimpleType) -> SimpleType {
+    let get_type_info = |simple_type: &SimpleType| {
+        let num_bits = simple_type.base_type.unwrap().num_bits();
+        let is_floating = simple_type.base_type.unwrap().is_floating();
+        let is_unsigned = matches!(simple_type.signedness, Signedness::Unsigned);
+        return (num_bits, is_floating, is_unsigned);
+    };
     let (first_bits, first_float, first_unsigned) = get_type_info(first_type);
     let (second_bits, second_float, second_unsigned) = get_type_info(second_type);
 
     // prioritize the type that is a floating point
     if first_float && !second_float {
-        return first_type;
+        return init_new_simple_type(first_type.base_type.unwrap(), Signedness::NoSign);
     }
     if !first_float && second_float {
-        return second_type;
+        return init_new_simple_type(second_type.base_type.unwrap(), Signedness::NoSign);
+    }
+
+    // automatically upcast to an int
+    if first_bits < 32 && second_bits < 32 {
+        return init_new_simple_type(BaseType::Int, Signedness::Signed);
     }
 
     // prioritize the larger type
     if first_bits > second_bits {
-        return first_type;
+        return init_new_simple_type(first_type.base_type.unwrap(), first_type.signedness);
     }
     if first_bits < second_bits {
-        return second_type;
+        return init_new_simple_type(second_type.base_type.unwrap(), second_type.signedness);
     }
 
     // prioritize the unsigned type
     if first_unsigned && !second_unsigned {
-        return first_type;
+        return init_new_simple_type(first_type.base_type.unwrap(), first_type.signedness);
     }
 
-    second_type
-} */
+    init_new_simple_type(second_type.base_type.unwrap(), second_type.signedness)
+}

@@ -20,6 +20,29 @@ pub enum BaseType {
     Void,
 }
 
+impl BaseType {
+    pub fn is_floating(&self) -> bool {
+        match self {
+            Self::Float | Self::Double | Self::LongDouble => true,
+            _ => false,
+        }
+    }
+
+    pub fn num_bits(&self) -> u8 {
+        match self {
+            Self::Short => 16,
+            Self::Long => 64,
+            Self::Int => 32,
+            Self::_Bool => 1,
+            Self::Char => 8,
+            Self::Float => 32,
+            Self::Double => 64,
+            Self::LongDouble => 128,
+            Self::Void => 0,
+        }
+    }
+}
+
 impl Display for BaseType {
     fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let output = match self {
@@ -41,6 +64,7 @@ impl Display for BaseType {
 #[derive(Clone, Copy, Debug, PartialEq, Default, PartialOrd, Ord, Eq)]
 pub enum Signedness {
     #[default]
+    NoSign,
     Signed,
     Unsigned,
 }
@@ -50,9 +74,16 @@ impl Display for Signedness {
         let output = match self {
             Self::Signed => "signed",
             Self::Unsigned => "unsigned",
+            Self::NoSign => "nosign",
         };
 
         write!(display, "{output}")
+    }
+}
+
+impl Signedness {
+    pub fn has_sign(&self) -> bool {
+        !matches!(self, Signedness::NoSign)
     }
 }
 
@@ -102,7 +133,7 @@ impl Display for Qualifiers {
 pub struct SimpleType {
     pub base_type: Option<BaseType>,
     pub storage: Option<Storage>,
-    pub signedness: Option<Signedness>,
+    pub signedness: Signedness,
     pub qualifiers: Vec<Qualifiers>,
     pub is_inline_function: bool,
     pub is_typedef: bool,
@@ -125,7 +156,7 @@ impl Display for SimpleType {
             output.push_str(&format!("{qualifier} "));
         }
 
-        if matches!(self.signedness, Some(Signedness::Unsigned)) {
+        if matches!(self.signedness, Signedness::Unsigned) {
             output.push_str("unsigned ");
         }
 
@@ -162,8 +193,15 @@ impl Parser {
             return Err(format!("Type must have a base type"));
         }
 
-        if simple_type.signedness.is_none() {
-            simple_type.signedness = Some(Signedness::Signed);
+        if simple_type.base_type.unwrap().is_floating() && simple_type.signedness.has_sign() {
+            return Err(format!(
+                "Floating point {} cannot have signedness",
+                simple_type.base_type.unwrap()
+            ));
+        }
+
+        if !simple_type.signedness.has_sign() && !simple_type.base_type.unwrap().is_floating() {
+            simple_type.signedness = Signedness::Signed;
         }
 
         Ok(())
@@ -178,7 +216,7 @@ impl Parser {
             return Err(format!("Tag type can not be inline"));
         }
 
-        if simple_type.signedness.is_some() {
+        if simple_type.signedness.has_sign() {
             return Err(format!("Tag type cannot have a signedness"));
         }
 
@@ -257,8 +295,8 @@ impl Parser {
         }
 
         let signedness = match signedness.len() {
-            1 => Some(signedness[0]),
-            _ => None,
+            1 => signedness[0],
+            _ => Signedness::NoSign,
         };
 
         let storage = match storage_specifiers.len() {

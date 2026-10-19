@@ -1,19 +1,20 @@
-use crate::lexer::escape_sequences::CharList;
-use crate::lexer::escape_sequences::CharType;
-use crate::lexer::language_features::KeywordTypes;
-use crate::lexer::language_features::LiteralTypes;
-use crate::lexer::language_features::OperatorTypes;
-use crate::lexer::lexer::TokenTypes;
-use crate::lexer::number_parser::FloatType;
-use crate::lexer::number_parser::IntType;
-use crate::parser::aggregate_init::AggregateInit;
-use crate::parser::helper::pretty_clean_string;
-use crate::parser::helper::verify_next_in_comma_list;
-use crate::parser::nodes::IndentDisplay;
-use crate::parser::parser::Parser;
-use crate::parser::simple_type::SimpleType;
-use crate::parser::type_parser::TypeNode;
-use crate::semantics::semantics::SemanticInfo;
+use crate::{
+    lexer::{
+        escape_sequences::{CharList, CharType},
+        language_features::{KeywordTypes, LiteralTypes, OperatorTypes},
+        lexer::TokenTypes,
+        number_parser::{FloatType, IntType},
+    },
+    parser::{
+        aggregate_init::AggregateInit,
+        helper::{pretty_clean_string, verify_next_in_comma_list},
+        nodes::IndentDisplay,
+        parser::Parser,
+        simple_type::SimpleType,
+        type_parser::TypeNode,
+    },
+    semantics::semantics::SemanticInfo,
+};
 
 use std::fmt::Display;
 
@@ -115,12 +116,16 @@ pub enum ExprNode {
 }
 
 impl ExprNode {
-    pub fn add_cast(&mut self, cast_type: &SimpleType) {
-        todo!()
-        // *self = Self::Cast {
-        //     cast_type: cast_type.clone(),
-        //     expr: Box::new(self.clone()),
-        // };
+    pub fn add_cast(&mut self, simple_type: &SimpleType) {
+        let cast_type = Box::new(TypeNode::Normal {
+            held_type: simple_type.clone(),
+            held_value: Box::new(TypeNode::Empty),
+        });
+
+        *self = Self::Cast {
+            cast_type,
+            expr: Box::new(self.clone()),
+        };
     }
 }
 

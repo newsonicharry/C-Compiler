@@ -1,12 +1,14 @@
-use crate::lexer::language_features::{DataTypes, KeywordTypes, OperatorTypes};
-use crate::lexer::lexer::TokenTypes;
-use crate::parser::expression_parser::ExprNode;
-use crate::parser::helper::verify_next_in_comma_list;
-use crate::parser::nodes::IndentDisplay;
-use crate::parser::parser::Parser;
-use crate::parser::simple_type::{Qualifiers, SimpleType, Storage};
-use crate::parser::tag_types::helper::TagTypeKind;
-use crate::semantics::semantics::TypeID;
+use crate::{
+    lexer::{
+        language_features::{DataTypes, KeywordTypes, OperatorTypes},
+        lexer::TokenTypes,
+    },
+    parser::{
+        expression_parser::ExprNode, helper::verify_next_in_comma_list, nodes::IndentDisplay,
+        parser::Parser, simple_type::SimpleType, tag_types::helper::TagTypeKind,
+    },
+    semantics::semantics::TypeID,
+};
 use std::fmt::Display;
 
 #[derive(Clone, Debug, PartialEq)]
