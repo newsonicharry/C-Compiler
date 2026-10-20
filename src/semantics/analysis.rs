@@ -113,6 +113,7 @@ impl<'a> SemanticAnalysis<'a> {
                 }
             }
             // ExprNode::Identifier { identifier, semantic_info }
+            ExprNode::Unary { expr, .. } => self.get_expr_type(expr),
             _ => panic!("type not found"),
         }
     }
@@ -144,6 +145,9 @@ impl<'a> SemanticAnalysis<'a> {
                 };
 
                 semantic_info.symbol_id = Some(symbol.symbol_id);
+            }
+            ExprNode::Cast { expr, .. } => {
+                self.update_expr_node(expr)?;
             }
 
             _ => {}

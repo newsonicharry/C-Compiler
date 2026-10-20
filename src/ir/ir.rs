@@ -118,7 +118,7 @@ enum Module {
 
 enum RValue {
     VRegister(VRegisterID),
-    Literal(u64),
+    Literal(i64),
     Void,
 }
 
@@ -140,7 +140,16 @@ enum BinaryKind {
     Mul,
     Udiv,
     Sdiv,
+    Fadd,
+    Fsub,
+    Fmul,
     Fdiv,
+    And,
+    Or,
+    Xor,
+    Shl,
+    Lshr,
+    Ashr,
 }
 
 impl Display for BinaryKind {
@@ -151,7 +160,16 @@ impl Display for BinaryKind {
             Self::Mul => "mul",
             Self::Udiv => "udiv",
             Self::Sdiv => "sdiv",
+            Self::Fadd => "fadd",
+            Self::Fsub => "fsub",
+            Self::Fmul => "fmul",
             Self::Fdiv => "fdiv",
+            Self::And => "and",
+            Self::Or => "or",
+            Self::Xor => "xor",
+            Self::Shl => "shl",
+            Self::Lshr => "lshr",
+            Self::Ashr => "ashr",
         };
 
         write!(display, "{output}")
@@ -359,6 +377,9 @@ impl<'a> IRParser<'a> {
     pub fn program_to_llvm_ir(&self) -> String {
         let mut output = String::new();
 
+        output.push_str("target datalayout = \"e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128\"\n");
+        output.push_str("target triple = \"x86_64-unknown-linux-gnu\"\n\n");
+
         for module in &self.program.0 {
             match module {
                 Module::FunctionDef {
@@ -456,11 +477,36 @@ impl<'a> IRParser<'a> {
         let left_id = self.emit_expr(left, instructions);
         let right_id = self.emit_expr(right, instructions);
 
+        let left_type = self.type_lookup.lookup(left_id);
+
         let binary_kind = match operator {
             TokenTypes::Operator(operator) => match operator {
-                OperatorTypes::Plus => BinaryKind::Add,
-                OperatorTypes::Minus => BinaryKind::Sub,
-                OperatorTypes::Star => BinaryKind::Mul,
+                OperatorTypes::Plus => match left_type.ir_type.is_floating() {
+                    true => BinaryKind::Fadd,
+                    false => BinaryKind::Add,
+                },
+                OperatorTypes::Minus => match left_type.ir_type.is_floating() {
+                    true => BinaryKind::Fsub,
+                    false => BinaryKind::Sub,
+                },
+                OperatorTypes::Star => match left_type.ir_type.is_floating() {
+                    true => BinaryKind::Fmul,
+                    false => BinaryKind::Mul,
+                },
+                OperatorTypes::Divide => match left_type.signedness {
+                    Signedness::Signed => BinaryKind::Sdiv,
+                    Signedness::Unsigned => BinaryKind::Udiv,
+                    Signedness::NoSign => BinaryKind::Fdiv,
+                },
+                OperatorTypes::BitLShift => BinaryKind::Shl,
+                OperatorTypes::BitRShift => match left_type.signedness {
+                    Signedness::Signed => BinaryKind::Ashr,
+                    Signedness::Unsigned => BinaryKind::Lshr,
+                    Signedness::NoSign => unreachable!(),
+                },
+                OperatorTypes::Amperstand => BinaryKind::And,
+                OperatorTypes::BitXOR => BinaryKind::Xor,
+                OperatorTypes::BitOr => BinaryKind::Or,
 
                 _ => todo!(),
             },
@@ -511,7 +557,7 @@ impl<'a> IRParser<'a> {
                     false => Signedness::Signed,
                 };
 
-                literal = RValue::Literal(num.value as u64)
+                literal = RValue::Literal(num.value as i64)
             }
 
             _ => todo!(),
@@ -635,6 +681,61 @@ impl<'a> IRParser<'a> {
         self.curr_id
     }
 
+    fn emit_unary_opeartor(
+        &mut self,
+        expr: &ExprNode,
+        instructions: &mut Vec<Instruction>,
+    ) -> VRegisterID {
+        let ExprNode::Unary { operator, expr } = expr else {
+            unreachable!()
+        };
+
+        let expr_id = self.emit_expr(expr, instructions);
+        let type_info = *self.type_lookup.lookup(expr_id);
+
+        let instruction = match operator {
+            // OperatorTypes::Plus => {}
+            OperatorTypes::Minus => Instruction::BinaryOp {
+                kind: BinaryKind::Sub,
+                size: type_info.ir_type,
+                left: RValue::Literal(0),
+                right: RValue::VRegister(expr_id),
+                v_register: self.curr_id.next(),
+            },
+
+            OperatorTypes::Inc => Instruction::BinaryOp {
+                kind: BinaryKind::Add,
+                size: type_info.ir_type,
+                left: RValue::VRegister(expr_id),
+                right: RValue::Literal(1),
+                v_register: self.curr_id.next(),
+            },
+
+            OperatorTypes::Dec => Instruction::BinaryOp {
+                kind: BinaryKind::Sub,
+                size: type_info.ir_type,
+                left: RValue::VRegister(expr_id),
+                right: RValue::Literal(1),
+                v_register: self.curr_id.next(),
+            },
+
+            OperatorTypes::BitNot => Instruction::BinaryOp {
+                kind: BinaryKind::Xor,
+                size: type_info.ir_type,
+                left: RValue::VRegister(expr_id),
+                right: RValue::Literal(-1),
+                v_register: self.curr_id.next(),
+            },
+
+            _ => todo!(),
+        };
+
+        self.type_lookup.add_type(self.curr_id, type_info);
+        instructions.push(instruction);
+
+        self.curr_id
+    }
+
     fn emit_expr(&mut self, expr: &ExprNode, instructions: &mut Vec<Instruction>) -> VRegisterID {
         match expr {
             ExprNode::Binary { .. } => self.emit_binary_expr(expr, instructions),
@@ -644,6 +745,7 @@ impl<'a> IRParser<'a> {
             ExprNode::Identifier { .. } => self.get_identifier_v_register(expr),
             ExprNode::Cast { .. } => self.emit_cast_expr(expr, instructions),
 
+            ExprNode::Unary { .. } => self.emit_unary_opeartor(expr, instructions),
             _ => todo!(),
         }
     }

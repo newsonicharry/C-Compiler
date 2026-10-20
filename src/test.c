@@ -1,8 +1,7 @@
 
 int main() {
 
-  short x = 10 * 2ul;
+  signed char x = -128 >> 3;
 
-  // return x;
-  return 0;
+  return (int)x;
 }
