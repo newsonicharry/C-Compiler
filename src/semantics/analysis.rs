@@ -31,27 +31,6 @@ impl<'a> SemanticAnalysis<'a> {
         Ok(())
     }
 
-    /* fn update_init_node(&mut self, init_node: &mut GlobalNode) -> Result<(), String> {
-        // todo!()
-        let GlobalNode::Initalizer { var_type, .. } = init_node else {
-            unreachable!()
-        };
-
-        let type_clone = var_type.clone();
-
-        let TypeNode::Variable { name, .. } = var_type else {
-            unreachable!()
-        };
-
-        self.semantics.add_identifier(
-            name,
-            &TypeTableValue::Identifier(Box::new(type_clone)),
-            SymbolKind::Variable,
-        )?;
-
-        Ok(())
-    } */
-
     fn update_func_node(&mut self, func_node: &mut GlobalNode) -> Result<(), String> {
         self.semantics.set_scope_id(ScopeId(0));
 
@@ -68,13 +47,29 @@ impl<'a> SemanticAnalysis<'a> {
             unreachable!()
         };
 
-        let info = self.semantics.add_identifier(
+        *semantic_info = self.semantics.add_identifier(
             name,
             &TypeTableValue::Identifier(signature.clone()),
             SymbolKind::Function,
         )?;
 
-        *semantic_info = info;
+        self.semantics.set_curr_function(signature);
+
+        let TypeNode::Function { parameters, .. } = &**signature else {
+            unreachable!()
+        };
+
+        for parameter in parameters {
+            let TypeNode::Variable { name, held_value } = parameter.clone() else {
+                unreachable!();
+            };
+
+            self.semantics.add_identifier(
+                &name,
+                &TypeTableValue::Identifier(held_value),
+                SymbolKind::Variable,
+            )?;
+        }
 
         if let Some(block) = body {
             self.update_block_node(block)?;
@@ -118,6 +113,102 @@ impl<'a> SemanticAnalysis<'a> {
         }
     }
 
+    fn update_function_call(&mut self, expr: &mut ExprNode) -> Result<(), String> {
+        let ExprNode::PostFix { left, right } = expr else {
+            unreachable!()
+        };
+
+        let ExprNode::Identifier {
+            identifier,
+            semantic_info,
+        } = &mut **left
+        else {
+            return Err(format!(
+                "Expected function call to be attached to an identifier"
+            ));
+        };
+
+        let ExprNode::FunctionCall { args, .. } = &mut **right else {
+            unreachable!()
+        };
+
+        let Some(symbol) = self
+            .semantics
+            .check_symbol(identifier, Namespace::Identifier)
+            .cloned()
+        else {
+            return Err(format!("Expected function call {identifier} to exist"));
+        };
+
+        semantic_info.symbol_id = Some(symbol.symbol_id);
+        semantic_info.type_id = Some(symbol.type_id);
+
+        let function_type_table_value = self.semantics.get_type(symbol.type_id);
+
+        let function_type = match function_type_table_value {
+            TypeTableValue::Identifier(type_node) => type_node,
+            _ => return Err(format!("Expected identifier type for function")),
+        };
+
+        let TypeNode::Function {
+            return_type,
+            parameters,
+            ..
+        } = &**function_type
+        else {
+            return Err(format!(
+                "Expected function call to {identifier} to be a function type"
+            ));
+        };
+
+        let mut has_void_parameter = false;
+        if parameters.len() == 1 {
+            if let TypeNode::Normal { held_type, .. } = &parameters[0] {
+                if held_type.base_type == Some(BaseType::Void) {
+                    has_void_parameter = true;
+                }
+            }
+        }
+
+        if has_void_parameter {
+            if args.len() != 0 {
+                return Err(format!("Unexpected argument"));
+            } else {
+                return Ok(());
+            }
+        }
+
+        if args.len() != parameters.len() {
+            return Err(format!("Unexpected number of argument"));
+        }
+
+        for (mut parameter, arg) in parameters.iter().zip(args.iter_mut()) {
+            if let TypeNode::Variable { held_value, .. } = parameter {
+                parameter = held_value;
+            }
+
+            *arg = ExprNode::Cast {
+                cast_type: Box::new(parameter.clone()),
+                expr: Box::new(arg.clone()),
+            };
+        }
+
+        Ok(())
+        // todo!();
+    }
+
+    fn update_postfix_node(&mut self, expr: &mut ExprNode) -> Result<(), String> {
+        let ExprNode::PostFix { left, right } = expr else {
+            unreachable!()
+        };
+
+        if matches!(&**right, ExprNode::FunctionCall { .. }) {
+            self.update_function_call(expr)?;
+        }
+
+        Ok(())
+    }
+
     fn update_expr_node(&mut self, expr: &mut ExprNode) -> Result<(), String> {
         match expr {
             ExprNode::Binary {
@@ -146,12 +237,28 @@ impl<'a> SemanticAnalysis<'a> {
 
                 semantic_info.symbol_id = Some(symbol.symbol_id);
             }
-            ExprNode::Cast { expr, .. } => {
-                self.update_expr_node(expr)?;
-            }
+            ExprNode::Cast { expr, .. } => self.update_expr_node(expr)?,
+            ExprNode::PostFix { .. } => self.update_postfix_node(expr)?,
 
             _ => {}
         };
+
+        Ok(())
+    }
+
+    fn update_return(&mut self, potential_expr: &mut Option<ExprNode>) -> Result<(), String> {
+        if let Some(expr) = potential_expr {
+            self.update_expr_node(expr)?;
+
+            let TypeNode::Function { return_type, .. } = self.semantics.get_curr_function() else {
+                unreachable!()
+            };
+
+            *expr = ExprNode::Cast {
+                cast_type: Box::new(*return_type.clone()),
+                expr: Box::new(expr.clone()),
+            };
+        }
 
         Ok(())
     }
@@ -171,11 +278,7 @@ impl<'a> SemanticAnalysis<'a> {
             match statement {
                 StatementNode::General(node) => self.update_general_statement_node(node)?,
                 StatementNode::Expression(expr) => self.update_expr_node(expr)?,
-                StatementNode::Return(potential_expr) => {
-                    if let Some(expr) = potential_expr {
-                        self.update_expr_node(expr)?;
-                    }
-                }
+                StatementNode::Return(potential_expr) => self.update_return(potential_expr)?,
                 _ => todo!(),
             }
         }

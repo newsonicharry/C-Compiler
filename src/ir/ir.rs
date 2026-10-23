@@ -15,13 +15,13 @@ use crate::{
         simple_type::{BaseType, Signedness, SimpleType},
         type_parser::TypeNode,
     },
-    semantics::semantics::{SemanticInfo, Semantics, SymbolID},
+    semantics::semantics::{SemanticInfo, Semantics, SymbolID, TypeTableValue},
 };
 
 struct Program(pub Vec<Module>);
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
-pub struct VRegisterID(pub u32);
+pub struct VRegisterID(pub i64);
 
 impl Display for VRegisterID {
     fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -31,6 +31,7 @@ impl Display for VRegisterID {
 
 impl VRegisterID {
     pub fn next(&mut self) -> VRegisterID {
+        // let temp = *self;
         self.0 += 1;
         *self
     }
@@ -113,6 +114,7 @@ enum Module {
         return_type: IRType,
         name: String,
         instructions: Vec<Instruction>,
+        params: Vec<SignedIRType>,
     },
 }
 
@@ -239,6 +241,12 @@ enum Instruction {
         value: RValue,
         v_register: VRegisterID,
     },
+    Call {
+        func_name: String,
+        args: Vec<(IRType, RValue)>,
+        return_value: IRType,
+        v_register: VRegisterID,
+    },
 }
 
 impl Instruction {
@@ -289,6 +297,26 @@ impl Instruction {
                 to_size,
                 value,
             } => format!("  %{v_register} = {kind} {from_size} {value} to {to_size} \n"),
+
+            Self::Call {
+                func_name,
+                args,
+                return_value,
+                v_register,
+            } => {
+                let mut output = format!("  %{v_register} = call {return_value} @{func_name}(");
+
+                for (i, (ir_type, r_value)) in args.iter().enumerate() {
+                    output.push_str(&format!("{ir_type} {r_value}"));
+
+                    if i != args.len() - 1 {
+                        output.push_str(", ");
+                    }
+                }
+
+                output.push_str(")\n");
+                output
+            }
         }
     }
 }
@@ -386,11 +414,21 @@ impl<'a> IRParser<'a> {
                     return_type,
                     name,
                     instructions,
+                    params,
                 } => {
-                    output.push_str(&format!(
-                        "define dso_local {} @{}() {{\n",
-                        return_type, name
-                    ));
+                    output.push_str(&format!("define dso_local {return_type} @{name}("));
+
+                    for (i, param) in params.iter().enumerate() {
+                        output.push_str(&format!("{} %{}", param.ir_type, i));
+
+                        if i != params.len() - 1 {
+                            output.push_str(", ");
+                        }
+                    }
+
+                    output.push_str("){\n");
+                    output.push_str("entry:\n");
+
                     instructions
                         .iter()
                         .for_each(|element| output.push_str(&element.as_llvm_ir()));
@@ -736,6 +774,73 @@ impl<'a> IRParser<'a> {
         self.curr_id
     }
 
+    fn emit_function_call(
+        &mut self,
+        expr: &ExprNode,
+        instructions: &mut Vec<Instruction>,
+    ) -> VRegisterID {
+        let ExprNode::PostFix { left, right } = expr else {
+            unreachable!()
+        };
+
+        let ExprNode::Identifier {
+            identifier,
+            semantic_info,
+        } = &**left
+        else {
+            unreachable!()
+        };
+
+        let ExprNode::FunctionCall { args, .. } = &**right else {
+            unreachable!()
+        };
+
+        let func_type = match self.semantics.get_type(semantic_info.type_id.unwrap()) {
+            TypeTableValue::Identifier(x) => x,
+            _ => unreachable!(),
+        };
+        let TypeNode::Function { return_type, .. } = &**func_type else {
+            unreachable!()
+        };
+
+        let mut ir_args = Vec::new();
+
+        for arg in args {
+            let v_register = self.emit_expr(arg, instructions);
+            let ir_type = self.type_lookup.lookup(v_register);
+
+            ir_args.push((ir_type.ir_type, RValue::VRegister(v_register)));
+        }
+
+        let instruction = Instruction::Call {
+            func_name: identifier.clone(),
+            args: ir_args,
+            return_value: lower_type(return_type).ir_type,
+            v_register: self.curr_id.next(),
+        };
+
+        instructions.push(instruction);
+
+        self.curr_id
+    }
+
+    fn emit_postfix_expr(
+        &mut self,
+        expr: &ExprNode,
+        instructions: &mut Vec<Instruction>,
+    ) -> VRegisterID {
+        let ExprNode::PostFix { left, right } = expr else {
+            unreachable!()
+        };
+
+        // shamelessly copying code
+        if matches!(&**right, ExprNode::FunctionCall { .. }) {
+            return self.emit_function_call(expr, instructions);
+        }
+
+        todo!()
+    }
+
     fn emit_expr(&mut self, expr: &ExprNode, instructions: &mut Vec<Instruction>) -> VRegisterID {
         match expr {
             ExprNode::Binary { .. } => self.emit_binary_expr(expr, instructions),
@@ -746,6 +851,7 @@ impl<'a> IRParser<'a> {
             ExprNode::Cast { .. } => self.emit_cast_expr(expr, instructions),
 
             ExprNode::Unary { .. } => self.emit_unary_opeartor(expr, instructions),
+            ExprNode::PostFix { .. } => self.emit_postfix_expr(expr, instructions),
             _ => todo!(),
         }
     }
@@ -875,15 +981,19 @@ impl<'a> IRParser<'a> {
             unreachable!()
         };
 
+        self.curr_id = VRegisterID((parameters.len()) as i64 - 1);
+        let params = parameters.iter().map(|x| lower_type(x)).collect();
+
         let mut body_instructions = Vec::new();
         if let Some(statements) = body {
             self.emit_statement_node(statements, &mut body_instructions);
         }
 
         let func_def = Module::FunctionDef {
-            return_type: IRType::I32,
+            return_type: lower_type(return_type).ir_type,
             name: name.clone(),
             instructions: body_instructions,
+            params,
         };
 
         self.program.0.push(func_def);

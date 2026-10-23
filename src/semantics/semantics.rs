@@ -189,6 +189,7 @@ pub struct Semantics {
     types: TypeTable,
 
     anonymous_id: u32,
+    curr_function_type: TypeNode,
 }
 
 impl Default for Semantics {
@@ -199,12 +200,12 @@ impl Default for Semantics {
             symbols: SymbolTable::default(),
             types: TypeTable::default(),
             anonymous_id: 0,
+            curr_function_type: TypeNode::default(),
         }
     }
 }
 
 impl Semantics {
-    // (WARNING: THIS CODE MIGHT BE UNNECESSARY)
     /// Returns the new name of an anonymous tag type
     /// Internally all struct must have a name, and an anonymous struct will be given one
     pub fn generate_new_name(&mut self) -> String {
@@ -333,5 +334,17 @@ impl Semantics {
                 return None;
             }
         }
+    }
+
+    pub fn get_type(&self, type_id: TypeID) -> &TypeTableValue {
+        self.types.lookup(type_id)
+    }
+
+    pub fn set_curr_function(&mut self, func_type: &TypeNode) {
+        self.curr_function_type = func_type.clone();
+    }
+
+    pub fn get_curr_function(&mut self) -> &TypeNode {
+        &self.curr_function_type
     }
 }

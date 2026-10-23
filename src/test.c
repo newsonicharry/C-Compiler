@@ -1,7 +1,9 @@
 
+
+int other(int x) { return 2; }
+
 int main() {
 
-  signed char x = -128 >> 3;
-
-  return (int)x;
+  // 0;
+  return other(5);
 }
