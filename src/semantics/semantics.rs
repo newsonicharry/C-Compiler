@@ -234,12 +234,13 @@ impl Semantics {
     /// Enters a deeper layer of scope
     /// If no deeper layer exists then one will be created
     pub fn enter_scope(&mut self) {
-        if self.curr_scope().has_no_children() {
-            self.expand_scope();
-            return;
-        }
-
-        self.curr_scope_id = self.curr_scope().last_child();
+        // if self.curr_scope().has_no_children() {
+        // self.expand_scope();
+        // return;
+        // }
+        self.expand_scope();
+        return;
+        // self.curr_scope_id = self.curr_scope().last_child();
     }
 
     fn expand_scope(&mut self) {

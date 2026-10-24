@@ -1,7 +1,10 @@
 use std::slice::IterMut;
 
 use crate::{
-    lexer::language_features::DataTypes,
+    lexer::{
+        language_features::{DataTypes, OperatorTypes},
+        lexer::TokenTypes,
+    },
     parser::{
         expression_parser::ExprNode,
         nodes::{AST, GlobalNode, StatementNode},
@@ -55,24 +58,25 @@ impl<'a> SemanticAnalysis<'a> {
 
         self.semantics.set_curr_function(signature);
 
-        let TypeNode::Function { parameters, .. } = &**signature else {
+        let TypeNode::Function { parameters, .. } = &mut **signature else {
             unreachable!()
         };
 
-        for parameter in parameters {
-            let TypeNode::Variable { name, held_value } = parameter.clone() else {
-                unreachable!();
-            };
+        if let Some(StatementNode::Block { scope_id, .. }) = body {
+            self.semantics.set_scope_id(*scope_id);
+            for (parameter, param_semantic_info) in parameters {
+                let TypeNode::Variable { name, held_value } = parameter.clone() else {
+                    unreachable!();
+                };
 
-            self.semantics.add_identifier(
-                &name,
-                &TypeTableValue::Identifier(held_value),
-                SymbolKind::Variable,
-            )?;
-        }
+                *param_semantic_info = self.semantics.add_identifier(
+                    &name,
+                    &TypeTableValue::Identifier(held_value),
+                    SymbolKind::Variable,
+                )?;
+            }
 
-        if let Some(block) = body {
-            self.update_block_node(block)?;
+            self.update_block_node(body.as_mut().unwrap())?;
         }
 
         Ok(())
@@ -163,7 +167,7 @@ impl<'a> SemanticAnalysis<'a> {
 
         let mut has_void_parameter = false;
         if parameters.len() == 1 {
-            if let TypeNode::Normal { held_type, .. } = &parameters[0] {
+            if let TypeNode::Normal { held_type, .. } = &parameters[0].0 {
                 if held_type.base_type == Some(BaseType::Void) {
                     has_void_parameter = true;
                 }
@@ -179,13 +183,15 @@ impl<'a> SemanticAnalysis<'a> {
         }
 
         if args.len() != parameters.len() {
+            println!("{}, {}", args.len(), parameters.len());
             return Err(format!("Unexpected number of argument"));
         }
 
-        for (mut parameter, arg) in parameters.iter().zip(args.iter_mut()) {
-            if let TypeNode::Variable { held_value, .. } = parameter {
-                parameter = held_value;
-            }
+        for ((parameter, _), arg) in parameters.iter().zip(args.iter_mut()) {
+            let parameter = match parameter {
+                TypeNode::Variable { held_value, .. } => *held_value.clone(),
+                _ => parameter.clone(),
+            };
 
             *arg = ExprNode::Cast {
                 cast_type: Box::new(parameter.clone()),
@@ -213,16 +219,42 @@ impl<'a> SemanticAnalysis<'a> {
         match expr {
             ExprNode::Binary {
                 left,
-                operator: _,
+                operator,
                 right,
             } => {
                 self.update_expr_node(left)?;
                 self.update_expr_node(right)?;
 
-                let cast = conversion_rules(&self.get_expr_type(left), &self.get_expr_type(right));
+                if matches!(operator, TokenTypes::Assignment(_)) {
+                    let ExprNode::Identifier { identifier, .. } = &**left else {
+                        return Err(format!(
+                            "Assignment operator can only be paired with a variable"
+                        ));
+                    };
 
-                left.add_cast(&cast);
-                right.add_cast(&cast);
+                    let Some(symbol) = self
+                        .semantics
+                        .check_symbol(identifier, Namespace::Identifier)
+                        .cloned()
+                    else {
+                        return Err(format!("Expected variable {identifier} to be defined"));
+                    };
+
+                    let var_type = match self.semantics.get_type(symbol.type_id) {
+                        TypeTableValue::Identifier(x) => x,
+                        _ => unreachable!(),
+                    };
+
+                    *right = Box::new(ExprNode::Cast {
+                        cast_type: Box::new(*var_type.clone()),
+                        expr: Box::new(*right.clone()),
+                    });
+                } else {
+                    let cast =
+                        conversion_rules(&self.get_expr_type(left), &self.get_expr_type(right));
+                    left.add_cast(&cast);
+                    right.add_cast(&cast);
+                }
             }
             ExprNode::Identifier {
                 identifier,

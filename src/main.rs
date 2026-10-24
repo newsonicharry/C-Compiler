@@ -40,10 +40,10 @@ fn main() {
 
     let analysis = semantic_analysis.analyze().unwrap();
 
+    println!("{ast}");
+
     let mut ir = IRParser::new(&ast, &parser.semantics);
     ir.parse();
-
-    println!("{ast}");
 
     fs::write("/tmp/compiler_output.ll", ir.program_to_llvm_ir()).unwrap();
     Command::new("clang")

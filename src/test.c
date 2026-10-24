@@ -1,9 +1,7 @@
 
 
-int other(int x) { return 2; }
-
-int main() {
-
-  // 0;
-  return other(5);
+double other(int x) {
+  x = 20;
+  return x;
 }
+int main() { return other(10); }

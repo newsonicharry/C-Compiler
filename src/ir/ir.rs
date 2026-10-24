@@ -21,7 +21,7 @@ use crate::{
 struct Program(pub Vec<Module>);
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
-pub struct VRegisterID(pub i64);
+pub struct VRegisterID(pub u64);
 
 impl Display for VRegisterID {
     fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -419,7 +419,7 @@ impl<'a> IRParser<'a> {
                     output.push_str(&format!("define dso_local {return_type} @{name}("));
 
                     for (i, param) in params.iter().enumerate() {
-                        output.push_str(&format!("{} %{}", param.ir_type, i));
+                        output.push_str(&format!("{} %{}", param.ir_type, i + 1));
 
                         if i != params.len() - 1 {
                             output.push_str(", ");
@@ -457,10 +457,12 @@ impl<'a> IRParser<'a> {
             .identifier_lookup
             .lookup_v_register(semantic_info.symbol_id.unwrap());
 
+        let type_lookup = self.type_lookup.lookup(right_id).clone();
+
         match assignment {
             AssignmentTypes::SimpleAssignment => {
                 instructions.push(Instruction::Store {
-                    size: self.type_lookup.lookup(right_id).ir_type,
+                    size: type_lookup.ir_type,
                     value: RValue::VRegister(right_id),
                     store_ptr: alloc_info.allocated_id,
                 });
@@ -469,14 +471,14 @@ impl<'a> IRParser<'a> {
             AssignmentTypes::MultiAssignment => {
                 instructions.push(Instruction::BinaryOp {
                     kind: BinaryKind::Mul,
-                    size: self.type_lookup.lookup(right_id).ir_type,
+                    size: type_lookup.ir_type,
                     left: RValue::VRegister(alloc_info.loaded_id),
                     right: RValue::VRegister(right_id),
                     v_register: self.curr_id.next(),
                 });
 
                 instructions.push(Instruction::Store {
-                    size: self.type_lookup.lookup(right_id).ir_type,
+                    size: type_lookup.ir_type,
                     value: RValue::VRegister(self.curr_id),
                     store_ptr: alloc_info.allocated_id,
                 });
@@ -486,10 +488,14 @@ impl<'a> IRParser<'a> {
         };
 
         instructions.push(Instruction::Load {
-            size: IRType::I32,
+            size: type_lookup.ir_type,
             value_ptr: alloc_info.allocated_id,
             v_register: self.curr_id.next(),
         });
+
+        self.identifier_lookup
+            .update_v_register(semantic_info.symbol_id.unwrap(), self.curr_id);
+        self.type_lookup.add_type(self.curr_id, type_lookup);
 
         self.curr_id
     }
@@ -698,8 +704,8 @@ impl<'a> IRParser<'a> {
         };
 
         let expr_id = self.emit_expr(expr, instructions);
-
         let cast_from_type = self.type_lookup.lookup(expr_id);
+
         let cast_to_type = lower_type(cast_type);
         let cast_kind = Self::determine_cast_kind(cast_from_type, &cast_to_type);
 
@@ -812,15 +818,16 @@ impl<'a> IRParser<'a> {
             ir_args.push((ir_type.ir_type, RValue::VRegister(v_register)));
         }
 
+        let return_type_info = lower_type(return_type);
         let instruction = Instruction::Call {
             func_name: identifier.clone(),
             args: ir_args,
-            return_value: lower_type(return_type).ir_type,
+            return_value: return_type_info.ir_type,
             v_register: self.curr_id.next(),
         };
 
         instructions.push(instruction);
-
+        self.type_lookup.add_type(self.curr_id, return_type_info);
         self.curr_id
     }
 
@@ -866,11 +873,11 @@ impl<'a> IRParser<'a> {
             return;
         };
 
-        self.emit_expr(expr, instructions);
+        let v_register = self.emit_expr(expr, instructions);
 
         instructions.push(Instruction::Return {
-            size: IRType::I32,
-            value: RValue::VRegister(self.curr_id),
+            size: self.type_lookup.lookup(v_register).ir_type,
+            value: RValue::VRegister(v_register),
         });
     }
 
@@ -963,9 +970,7 @@ impl<'a> IRParser<'a> {
 
     fn emit_function_node(&mut self, func_node: &GlobalNode) {
         let GlobalNode::Function {
-            signature,
-            body,
-            semantic_info,
+            signature, body, ..
         } = func_node
         else {
             unreachable!();
@@ -975,16 +980,58 @@ impl<'a> IRParser<'a> {
             name,
             return_type,
             parameters,
-            is_variadic,
+            ..
         } = &**signature
         else {
             unreachable!()
         };
 
-        self.curr_id = VRegisterID((parameters.len()) as i64 - 1);
-        let params = parameters.iter().map(|x| lower_type(x)).collect();
+        self.curr_id = VRegisterID(0);
+        let mut params = Vec::new();
+        for (parameter, _) in parameters {
+            self.curr_id.next();
+            let type_info = lower_type(parameter);
+            params.push(type_info);
+            self.type_lookup.add_type(self.curr_id, type_info);
+        }
 
         let mut body_instructions = Vec::new();
+
+        for (id, (param, (_, semantic_info))) in params.iter().zip(parameters.iter()).enumerate() {
+            let param_v_register = VRegisterID(id as u64 + 1);
+            let alloc = Instruction::Alloca {
+                size: param.ir_type,
+                v_register: self.curr_id.next(),
+            };
+
+            let store = Instruction::Store {
+                size: param.ir_type,
+                value: RValue::VRegister(param_v_register),
+                store_ptr: self.curr_id,
+            };
+
+            let load = Instruction::Load {
+                size: param.ir_type,
+                value_ptr: self.curr_id,
+                v_register: self.curr_id.next(),
+            };
+
+            body_instructions.push(alloc);
+            body_instructions.push(store);
+            body_instructions.push(load);
+
+            self.type_lookup.add_type(self.curr_id, param.clone());
+
+            self.identifier_lookup.add_identifier(
+                semantic_info.symbol_id.unwrap(),
+                AllocationInfo {
+                    loaded_id: self.curr_id,
+                    allocated_id: self.curr_id.prev(),
+                    type_info: param.clone(),
+                },
+            );
+        }
+
         if let Some(statements) = body {
             self.emit_statement_node(statements, &mut body_instructions);
         }

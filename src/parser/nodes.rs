@@ -1,12 +1,11 @@
-use crate::parser::expression_parser::ExprNode;
-use crate::parser::helper::pretty_clean_string;
-use crate::parser::if_statement::IfStatement;
-use crate::parser::jump_label::JumpLabel;
-use crate::parser::tag_types::helper::TagTypeData;
-use crate::parser::type_parser::TypeNode;
-use crate::semantics::semantics::{ScopeId, SemanticInfo};
-use std::fmt::Display;
-use std::thread::Scope;
+use crate::{
+    parser::{
+        expression_parser::ExprNode, helper::pretty_clean_string, if_statement::IfStatement,
+        jump_label::JumpLabel, tag_types::helper::TagTypeData, type_parser::TypeNode,
+    },
+    semantics::semantics::{ScopeId, SemanticInfo},
+};
+use std::{fmt::Display, thread::Scope};
 
 pub trait IndentDisplay {
     fn indent_display(&self, indent: usize) -> String;

@@ -7,7 +7,7 @@ use crate::{
         expression_parser::ExprNode, helper::verify_next_in_comma_list, nodes::IndentDisplay,
         parser::Parser, simple_type::SimpleType, tag_types::helper::TagTypeKind,
     },
-    semantics::semantics::TypeID,
+    semantics::semantics::{SemanticInfo, TypeID},
 };
 use std::fmt::Display;
 
@@ -47,7 +47,7 @@ pub enum TypeNode {
     Function {
         name: String,
         return_type: Box<TypeNode>,
-        parameters: Vec<TypeNode>,
+        parameters: Vec<(TypeNode, SemanticInfo)>,
         is_variadic: bool,
     },
 }
@@ -125,7 +125,7 @@ impl IndentDisplay for TypeNode {
 
                 if !parameters.is_empty() {
                     output.push_str(" (Params");
-                    for parameter in parameters {
+                    for (parameter, _) in parameters {
                         output.push_str(&format!(" {}", parameter));
                     }
 
@@ -357,7 +357,10 @@ impl Parser {
                         final_type = TypeNode::Function {
                             name: identifier,
                             return_type: Box::new(TypeNode::Empty),
-                            parameters: params,
+                            parameters: params
+                                .iter()
+                                .map(|x| (x.clone(), SemanticInfo::default()))
+                                .collect(),
                             is_variadic,
                         };
 
