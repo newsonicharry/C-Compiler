@@ -1,12 +1,18 @@
-use crate::lexer::language_features::{AssignmentTypes, DataTypes, KeywordTypes, OperatorTypes};
-use crate::lexer::lexer::TokenTypes;
-use crate::parser::expression_parser::ExprNode;
-use crate::parser::helper::pretty_clean_string;
-use crate::parser::nodes::{GlobalNode, IndentDisplay};
-use crate::parser::parser::Parser;
-use crate::parser::simple_type::{Qualifiers, SimpleType};
-use crate::parser::type_parser::TypeNode;
-use crate::semantics::semantics::{SemanticInfo, SymbolKind, TypeTableValue};
+use crate::{
+    lexer::{
+        language_features::{AssignmentTypes, KeywordTypes, OperatorTypes},
+        lexer::TokenTypes,
+    },
+    parser::{
+        expression_parser::ExprNode,
+        helper::pretty_clean_string,
+        nodes::{GlobalNode, IndentDisplay},
+        parser::Parser,
+        simple_type::SimpleType,
+        type_parser::TypeNode,
+    },
+    semantics::semantics::SemanticInfo,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TagTypeMember {
@@ -497,7 +503,7 @@ impl Parser {
         }
 
         if var_type_info.is_typedef {
-            self.update_tag_type_typedef(&defined_vars, &defined_tag_type);
+            self.update_tag_type_typedef(&defined_vars, &defined_tag_type)?;
 
             // for typedef in defined_vars {
             // println!("{typedef}");

@@ -136,31 +136,9 @@ impl DataTypes {
         ("typedef", Self::Typedef),
     ];
 
-    pub fn is_storage_specifier(&self) -> bool {
-        match self {
-            Self::Register | Self::Static | Self::Extern | Self::Auto | Self::Typedef => true,
-            _ => false,
-        }
-    }
-
     pub fn is_qualifier(&self) -> bool {
         match *self {
             Self::Const | Self::Volatile | Self::Restrict => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_modifier(&self) -> bool {
-        match *self {
-            // _Complex is techinally its own distict type but doing that would be a headache so this is used instead
-            Self::Signed | Self::Unsigned | Self::Short | Self::Long | Self::_Complex => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_function_specifier(&self) -> bool {
-        match *self {
-            Self::Inline => true,
             _ => false,
         }
     }

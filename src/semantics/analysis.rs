@@ -1,13 +1,10 @@
 use std::slice::IterMut;
 
 use crate::{
-    lexer::{
-        language_features::{DataTypes, OperatorTypes},
-        lexer::TokenTypes,
-    },
+    lexer::{language_features::OperatorTypes, lexer::TokenTypes},
     parser::{
         expression_parser::ExprNode,
-        nodes::{AST, GlobalNode, StatementNode},
+        nodes::{GlobalNode, StatementNode},
         simple_type::{BaseType, Signedness, SimpleType},
         type_parser::TypeNode,
     },
@@ -85,13 +82,11 @@ impl<'a> SemanticAnalysis<'a> {
     // fn update_binary_expr_cast(&mut self, expr: &mut ExprNode) {
     //     todo!()
     // }
+    //
 
-    fn get_expr_type(&self, expr: &ExprNode) -> SimpleType {
+    fn get_expr_type(&self, expr: &ExprNode) -> TypeNode {
         match expr {
-            ExprNode::Cast { cast_type, .. } => match &**cast_type {
-                TypeNode::Normal { held_type, .. } => held_type.clone(),
-                _ => todo!(),
-            },
+            ExprNode::Cast { cast_type, .. } => *cast_type.clone(),
             ExprNode::Integer { num } => {
                 let signedness = if num.storage.is_unsigned {
                     Signedness::Unsigned
@@ -99,21 +94,48 @@ impl<'a> SemanticAnalysis<'a> {
                     Signedness::Signed
                 };
 
+                let base_type;
                 if num.storage.is_long || num.storage.is_long_long {
-                    return init_new_simple_type(BaseType::Long, signedness);
+                    base_type = BaseType::Long;
                 } else if num.storage.is_float {
-                    return init_new_simple_type(BaseType::Float, signedness);
+                    base_type = BaseType::Float;
                 } else if num.storage.is_double {
-                    return init_new_simple_type(BaseType::Double, signedness);
+                    base_type = BaseType::Double;
                 } else if num.storage.is_long_double {
-                    return init_new_simple_type(BaseType::LongDouble, signedness);
+                    base_type = BaseType::LongDouble;
                 } else {
-                    return init_new_simple_type(BaseType::Int, signedness);
+                    base_type = BaseType::Int;
+                }
+
+                TypeNode::Normal {
+                    held_type: init_new_simple_type(base_type, signedness),
+                    held_value: Box::new(TypeNode::Empty),
                 }
             }
-            // ExprNode::Identifier { identifier, semantic_info }
-            ExprNode::Unary { expr, .. } => self.get_expr_type(expr),
-            _ => panic!("type not found"),
+            ExprNode::Identifier { semantic_info, .. } => {
+                match self.semantics.get_type(semantic_info.type_id.unwrap()) {
+                    TypeTableValue::Identifier(x) => *x.clone(),
+                    _ => unreachable!(),
+                }
+            }
+            ExprNode::Unary {
+                expr,
+                operator: _,
+                converted_to_type,
+            } => {
+                if let Some(converted_to_type) = converted_to_type {
+                    return *converted_to_type.clone();
+                }
+
+                self.get_expr_type(expr)
+            }
+
+            ExprNode::Binary { left, right, .. } => {
+                conversion_rules(&self.get_expr_type(left), &self.get_expr_type(right))
+            }
+            _ => {
+                panic!("type not found");
+            }
         }
     }
 
@@ -154,12 +176,7 @@ impl<'a> SemanticAnalysis<'a> {
             _ => return Err(format!("Expected identifier type for function")),
         };
 
-        let TypeNode::Function {
-            return_type,
-            parameters,
-            ..
-        } = &**function_type
-        else {
+        let TypeNode::Function { parameters, .. } = &**function_type else {
             return Err(format!(
                 "Expected function call to {identifier} to be a function type"
             ));
@@ -183,7 +200,6 @@ impl<'a> SemanticAnalysis<'a> {
         }
 
         if args.len() != parameters.len() {
-            println!("{}, {}", args.len(), parameters.len());
             return Err(format!("Unexpected number of argument"));
         }
 
@@ -193,10 +209,11 @@ impl<'a> SemanticAnalysis<'a> {
                 _ => parameter.clone(),
             };
 
-            *arg = ExprNode::Cast {
-                cast_type: Box::new(parameter.clone()),
-                expr: Box::new(arg.clone()),
-            };
+            arg.add_cast(&parameter);
+        }
+
+        for arg in args {
+            self.update_expr_node(arg)?;
         }
 
         Ok(())
@@ -204,12 +221,38 @@ impl<'a> SemanticAnalysis<'a> {
     }
 
     fn update_postfix_node(&mut self, expr: &mut ExprNode) -> Result<(), String> {
-        let ExprNode::PostFix { left, right } = expr else {
+        let ExprNode::PostFix { right, .. } = expr else {
             unreachable!()
         };
 
         if matches!(&**right, ExprNode::FunctionCall { .. }) {
             self.update_function_call(expr)?;
+        }
+
+        Ok(())
+    }
+
+    fn update_unary_node(&mut self, expr: &mut ExprNode) -> Result<(), String> {
+        let ExprNode::Unary {
+            operator,
+            expr,
+            converted_to_type,
+        } = expr
+        else {
+            unreachable!()
+        };
+
+        self.update_expr_node(expr)?;
+
+        // dereference operator
+        if matches!(operator, OperatorTypes::Star) {
+            let prior_type = self.get_expr_type(expr);
+
+            let dereferenced = match prior_type {
+                TypeNode::Pointer { held_value, .. } => *held_value.clone(),
+                _ => return Err(format!("Expected dereference to be placed on a pointer")),
+            };
+            *converted_to_type = Some(Box::new(dereferenced));
         }
 
         Ok(())
@@ -226,32 +269,12 @@ impl<'a> SemanticAnalysis<'a> {
                 self.update_expr_node(right)?;
 
                 if matches!(operator, TokenTypes::Assignment(_)) {
-                    let ExprNode::Identifier { identifier, .. } = &**left else {
-                        return Err(format!(
-                            "Assignment operator can only be paired with a variable"
-                        ));
-                    };
-
-                    let Some(symbol) = self
-                        .semantics
-                        .check_symbol(identifier, Namespace::Identifier)
-                        .cloned()
-                    else {
-                        return Err(format!("Expected variable {identifier} to be defined"));
-                    };
-
-                    let var_type = match self.semantics.get_type(symbol.type_id) {
-                        TypeTableValue::Identifier(x) => x,
-                        _ => unreachable!(),
-                    };
-
-                    *right = Box::new(ExprNode::Cast {
-                        cast_type: Box::new(*var_type.clone()),
-                        expr: Box::new(*right.clone()),
-                    });
+                    let var_type = &self.get_expr_type(left);
+                    right.add_cast(var_type);
                 } else {
                     let cast =
                         conversion_rules(&self.get_expr_type(left), &self.get_expr_type(right));
+
                     left.add_cast(&cast);
                     right.add_cast(&cast);
                 }
@@ -268,9 +291,11 @@ impl<'a> SemanticAnalysis<'a> {
                 };
 
                 semantic_info.symbol_id = Some(symbol.symbol_id);
+                semantic_info.type_id = Some(symbol.type_id)
             }
             ExprNode::Cast { expr, .. } => self.update_expr_node(expr)?,
             ExprNode::PostFix { .. } => self.update_postfix_node(expr)?,
+            ExprNode::Unary { .. } => self.update_unary_node(expr)?,
 
             _ => {}
         };
@@ -286,10 +311,7 @@ impl<'a> SemanticAnalysis<'a> {
                 unreachable!()
             };
 
-            *expr = ExprNode::Cast {
-                cast_type: Box::new(*return_type.clone()),
-                expr: Box::new(expr.clone()),
-            };
+            expr.add_cast(return_type);
         }
 
         Ok(())
@@ -342,19 +364,19 @@ impl<'a> SemanticAnalysis<'a> {
             unreachable!();
         };
 
-        let TypeNode::Normal { held_type, .. } = &*held_value.clone() else {
-            todo!()
-        };
+        // let TypeNode::Normal { held_type, .. } = &*held_value.clone() else {
+        //     todo!()
+        // };
 
         *semantic_info = self.semantics.add_identifier(
             &name,
-            &TypeTableValue::Identifier(held_value),
+            &TypeTableValue::Identifier(held_value.clone()),
             SymbolKind::Variable,
         )?;
 
         if let Some(r_value) = r_value {
             self.update_expr_node(r_value)?;
-            r_value.add_cast(held_type);
+            r_value.add_cast(&held_value);
         }
 
         Ok(())
@@ -373,7 +395,39 @@ fn init_new_simple_type(base_type: BaseType, signedness: Signedness) -> SimpleTy
     }
 }
 
-fn conversion_rules(first_type: &SimpleType, second_type: &SimpleType) -> SimpleType {
+fn conversion_rules(first_type: &TypeNode, second_type: &TypeNode) -> TypeNode {
+    let init_new_type_node = |base_type: BaseType, signedness: Signedness| {
+        let simple_type = init_new_simple_type(base_type, signedness);
+        TypeNode::Normal {
+            held_type: simple_type,
+            held_value: Box::new(TypeNode::Empty),
+        }
+    };
+
+    if matches!(first_type, TypeNode::Pointer { .. }) {
+        return first_type.clone();
+    }
+
+    if matches!(second_type, TypeNode::Pointer { .. }) {
+        return second_type.clone();
+    }
+
+    let TypeNode::Normal {
+        held_type: first_type,
+        ..
+    } = first_type
+    else {
+        unreachable!()
+    };
+
+    let TypeNode::Normal {
+        held_type: second_type,
+        ..
+    } = second_type
+    else {
+        unreachable!()
+    };
+
     let get_type_info = |simple_type: &SimpleType| {
         let num_bits = simple_type.base_type.unwrap().num_bits();
         let is_floating = simple_type.base_type.unwrap().is_floating();
@@ -385,29 +439,29 @@ fn conversion_rules(first_type: &SimpleType, second_type: &SimpleType) -> Simple
 
     // prioritize the type that is a floating point
     if first_float && !second_float {
-        return init_new_simple_type(first_type.base_type.unwrap(), Signedness::NoSign);
+        return init_new_type_node(first_type.base_type.unwrap(), Signedness::NoSign);
     }
     if !first_float && second_float {
-        return init_new_simple_type(second_type.base_type.unwrap(), Signedness::NoSign);
+        return init_new_type_node(second_type.base_type.unwrap(), Signedness::NoSign);
     }
 
     // automatically upcast to an int
     if first_bits < 32 && second_bits < 32 {
-        return init_new_simple_type(BaseType::Int, Signedness::Signed);
+        return init_new_type_node(BaseType::Int, Signedness::Signed);
     }
 
     // prioritize the larger type
     if first_bits > second_bits {
-        return init_new_simple_type(first_type.base_type.unwrap(), first_type.signedness);
+        return init_new_type_node(first_type.base_type.unwrap(), first_type.signedness);
     }
     if first_bits < second_bits {
-        return init_new_simple_type(second_type.base_type.unwrap(), second_type.signedness);
+        return init_new_type_node(second_type.base_type.unwrap(), second_type.signedness);
     }
 
     // prioritize the unsigned type
     if first_unsigned && !second_unsigned {
-        return init_new_simple_type(first_type.base_type.unwrap(), first_type.signedness);
+        return init_new_type_node(first_type.base_type.unwrap(), first_type.signedness);
     }
 
-    init_new_simple_type(second_type.base_type.unwrap(), second_type.signedness)
+    init_new_type_node(second_type.base_type.unwrap(), second_type.signedness)
 }

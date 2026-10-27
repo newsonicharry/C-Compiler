@@ -5,7 +5,7 @@ use crate::{
     },
     semantics::semantics::{ScopeId, SemanticInfo},
 };
-use std::{fmt::Display, thread::Scope};
+use std::fmt::Display;
 
 pub trait IndentDisplay {
     fn indent_display(&self, indent: usize) -> String;

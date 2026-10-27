@@ -10,7 +10,6 @@ use crate::{
         helper::{pretty_clean_string, verify_next_in_comma_list},
         nodes::IndentDisplay,
         parser::Parser,
-        simple_type::SimpleType,
         type_parser::TypeNode,
     },
     semantics::semantics::SemanticInfo,
@@ -78,6 +77,7 @@ pub enum ExprNode {
     Unary {
         operator: OperatorTypes,
         expr: Box<ExprNode>,
+        converted_to_type: Option<Box<TypeNode>>,
     },
     PostFix {
         left: Box<ExprNode>,
@@ -116,14 +116,9 @@ pub enum ExprNode {
 }
 
 impl ExprNode {
-    pub fn add_cast(&mut self, simple_type: &SimpleType) {
-        let cast_type = Box::new(TypeNode::Normal {
-            held_type: simple_type.clone(),
-            held_value: Box::new(TypeNode::Empty),
-        });
-
+    pub fn add_cast(&mut self, type_value: &TypeNode) {
         *self = Self::Cast {
-            cast_type,
+            cast_type: Box::new(type_value.clone()),
             expr: Box::new(self.clone()),
         };
     }
@@ -175,7 +170,7 @@ impl IndentDisplay for ExprNode {
                 ));
             }
 
-            Self::Unary { operator, expr } => {
+            Self::Unary { operator, expr, .. } => {
                 output.push_str(&format!(
                     "{indent_str}(Unary\n{next_indent_str}(Op {operator})\n{})",
                     expr.indent_display(indent + 2)
@@ -386,6 +381,7 @@ impl Parser {
             return Ok(ExprNode::Unary {
                 operator: operator_type,
                 expr: Box::new(operand?),
+                converted_to_type: None,
             });
         }
 

@@ -1,18 +1,19 @@
-use crate::parser::nodes::GlobalNode;
-use crate::parser::parser::Parser;
-use crate::parser::tag_types::helper::TagTypeData;
-use crate::parser::tag_types::helper::TagTypeKind;
-use crate::parser::type_parser::TypeNode;
-use crate::semantics::semantics::Namespace;
-use crate::semantics::semantics::SymbolKind;
-use crate::semantics::semantics::TypeTableValue;
+use crate::{
+    parser::{
+        nodes::GlobalNode,
+        parser::Parser,
+        tag_types::helper::{TagTypeData, TagTypeKind},
+        type_parser::TypeNode,
+    },
+    semantics::semantics::{Namespace, SymbolKind, TypeTableValue},
+};
 
 impl Parser {
     pub fn update_tag_type_typedef(
         &mut self,
         defined_typedefs: &Vec<GlobalNode>,
         defined_tag_type: &TagTypeData,
-    ) {
+    ) -> Result<(), String> {
         let tag_type_name_wrapped = defined_tag_type.name.as_ref();
         let tag_type_name;
 
@@ -33,7 +34,7 @@ impl Parser {
             &tag_type_name,
             &TypeTableValue::TagType(defined_tag_type.clone()),
             symbol_kind,
-        );
+        )?;
 
         let Some(tag_type_symbol) = self
             .semantics
@@ -68,8 +69,10 @@ impl Parser {
                 &typedef_name,
                 &TypeTableValue::Identifier(held_value),
                 SymbolKind::Typedef,
-            );
+            )?;
         }
+
+        Ok(())
     }
 
     /// returns a boolean on whether a given global node is a typedef
