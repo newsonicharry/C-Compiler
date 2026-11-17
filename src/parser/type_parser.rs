@@ -425,8 +425,7 @@ impl Parser {
                 _ => break,
             }
         }
-        // this is because multidimensional arrays exist and we start at the outside in
-        for array_expr in array_expressions.iter().rev() {
+        for array_expr in array_expressions.iter() {
             let internal_type = TypeNode::Array {
                 expr: array_expr.clone(),
                 held_value: Box::new(TypeNode::Empty),

@@ -1,11 +1,16 @@
-use crate::lexer::language_features::KeywordTypes;
-use crate::lexer::language_features::{AssignmentTypes, OperatorTypes};
-use crate::lexer::lexer::{Lexer, TokenTypes};
-use crate::parser::helper::to_statement;
-use crate::parser::nodes::{AST, GlobalNode, StatementNode};
-use crate::parser::tag_types::helper::TagTypeKind;
-use crate::parser::type_parser::TypeNode;
-use crate::semantics::semantics::{ScopeId, SemanticInfo, Semantics};
+use crate::{
+    lexer::{
+        language_features::{AssignmentTypes, KeywordTypes, OperatorTypes},
+        lexer::{Lexer, TokenTypes},
+    },
+    parser::{
+        helper::to_statement,
+        nodes::{AST, GlobalNode, StatementNode},
+        tag_types::helper::TagTypeKind,
+        type_parser::TypeNode,
+    },
+    semantics::semantics::{ScopeId, SemanticInfo, Semantics},
+};
 
 pub struct Parser {
     pub lexer: Lexer,

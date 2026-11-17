@@ -4,7 +4,7 @@ use crate::{
             AllocationInfo, BinaryKind, CastKind, IRType, Instruction, RValue, SignedIRType,
             VRegisterID,
         },
-        ir::{IRParser, lower_type},
+        ir::IRParser,
     },
     lexer::{
         language_features::{AssignmentTypes, OperatorTypes},
@@ -59,14 +59,14 @@ impl<'a> IRParser<'a> {
 
             AssignmentTypes::MultiAssignment => {
                 instructions.push(Instruction::Load {
-                    size: type_lookup.ir_type,
+                    size: type_lookup.ir_type.clone(),
                     value_ptr: store_ptr,
                     v_register: self.curr_id.next(),
                 });
 
                 instructions.push(Instruction::BinaryOp {
                     kind: BinaryKind::Mul,
-                    size: type_lookup.ir_type,
+                    size: type_lookup.ir_type.clone(),
                     left: RValue::VRegister(self.curr_id),
                     right: RValue::VRegister(right_id),
                     v_register: self.curr_id.next(),
@@ -142,11 +142,11 @@ impl<'a> IRParser<'a> {
             _ => todo!(),
         };
 
-        let binary_type = *self.type_lookup.lookup_type(left_id);
+        let binary_type = self.type_lookup.lookup_type(left_id).clone();
 
         let result_instruction = Instruction::BinaryOp {
             kind: binary_kind,
-            size: binary_type.ir_type,
+            size: binary_type.ir_type.clone(),
             left: RValue::VRegister(left_id),
             right: RValue::VRegister(right_id),
             v_register: self.curr_id.next(),
@@ -192,18 +192,18 @@ impl<'a> IRParser<'a> {
         }
 
         let alloca = Instruction::Alloca {
-            size,
+            size: size.clone(),
             v_register: self.curr_id.next(),
         };
 
         let store = Instruction::Store {
-            size,
+            size: size.clone(),
             value: literal,
             store_ptr: self.curr_id,
         };
 
         let load = Instruction::Load {
-            size,
+            size: size.clone(),
             value_ptr: self.curr_id,
             v_register: self.curr_id.next(),
         };
@@ -228,11 +228,7 @@ impl<'a> IRParser<'a> {
         expr: &ExprNode,
         instructions: &mut Vec<Instruction>,
     ) -> VRegisterID {
-        let ExprNode::Identifier {
-            identifier,
-            semantic_info,
-        } = expr
-        else {
+        let ExprNode::Identifier { semantic_info, .. } = expr else {
             unreachable!();
         };
 
@@ -244,12 +240,12 @@ impl<'a> IRParser<'a> {
         let type_table_value = self.semantics.get_type(semantic_info.type_id.unwrap());
 
         let type_lookup = match type_table_value {
-            TypeTableValue::Identifier(x) => lower_type(x),
+            TypeTableValue::Identifier(x) => self.lower_type(x, instructions),
             _ => todo!(),
         };
 
         instructions.push(Instruction::Load {
-            size: type_lookup.ir_type,
+            size: type_lookup.ir_type.clone(),
             value_ptr: allocated,
             v_register: self.curr_id.next(),
         });
@@ -260,8 +256,8 @@ impl<'a> IRParser<'a> {
     }
 
     fn determine_cast_kind(from: &SignedIRType, to: &SignedIRType) -> Option<CastKind> {
-        let from_type = from.ir_type;
-        let to_type = to.ir_type;
+        let from_type = from.ir_type.clone();
+        let to_type = to.ir_type.clone();
 
         if from_type.is_floating() && !to_type.is_floating() {
             return match to.signedness {
@@ -310,9 +306,9 @@ impl<'a> IRParser<'a> {
         };
 
         let expr_id = self.emit_expr(expr, instructions);
-        let cast_from_type = self.type_lookup.lookup_type(expr_id);
+        let cast_from_type = self.type_lookup.lookup_type(expr_id).clone();
 
-        let cast_to_type = lower_type(cast_type);
+        let cast_to_type = self.lower_type(cast_type, instructions);
 
         if matches!(cast_to_type.ir_type, IRType::Ptr)
             || matches!(cast_from_type.ir_type, IRType::Ptr)
@@ -320,19 +316,20 @@ impl<'a> IRParser<'a> {
             return expr_id;
         }
 
-        let cast_kind = Self::determine_cast_kind(cast_from_type, &cast_to_type);
+        let cast_kind = Self::determine_cast_kind(&cast_from_type, &cast_to_type);
 
         if let Some(kind) = cast_kind {
             let cast_instruction = Instruction::Cast {
                 kind,
-                from_size: cast_from_type.ir_type,
-                to_size: cast_to_type.ir_type,
+                from_size: cast_from_type.ir_type.clone(),
+                to_size: cast_to_type.ir_type.clone(),
                 value: RValue::VRegister(expr_id),
                 v_register: self.curr_id.next(),
             };
 
             instructions.push(cast_instruction);
-            self.type_lookup.add_type(self.curr_id, cast_to_type);
+            self.type_lookup
+                .add_type(self.curr_id, cast_to_type.clone());
             return self.curr_id;
         };
 
@@ -354,12 +351,22 @@ impl<'a> IRParser<'a> {
         };
 
         let expr_id = self.emit_expr(expr, instructions);
-        let type_info = *self.type_lookup.lookup_type(expr_id);
+        let type_info = self.type_lookup.lookup_type(expr_id).clone();
+
+        let potential_var_address = match &**expr {
+            ExprNode::Identifier { semantic_info, .. } => Some(
+                self.identifier_lookup
+                    .lookup_v_register(semantic_info.symbol_id.unwrap())
+                    .allocated_id,
+            ),
+            _ => None,
+        };
 
         let mut added_instructions = Vec::new();
 
         match operator {
-            // OperatorTypes::Plus => {}
+            // as far as im aware a unary plus literally doesnt have a purpose
+            OperatorTypes::Plus => {}
             OperatorTypes::Amperstand => {
                 let ExprNode::Identifier { semantic_info, .. } = &**expr else {
                     unreachable!()
@@ -375,10 +382,10 @@ impl<'a> IRParser<'a> {
                 let Some(converted_to_type) = converted_to_type else {
                     unreachable!();
                 };
-                let new_type = lower_type(converted_to_type);
+                let new_type = self.lower_type(converted_to_type, instructions);
 
                 let load = Instruction::Load {
-                    size: new_type.ir_type,
+                    size: new_type.ir_type.clone(),
                     value_ptr: expr_id,
                     v_register: self.curr_id.next(),
                 };
@@ -390,7 +397,7 @@ impl<'a> IRParser<'a> {
             OperatorTypes::Minus => {
                 added_instructions.push(Instruction::BinaryOp {
                     kind: BinaryKind::Sub,
-                    size: type_info.ir_type,
+                    size: type_info.ir_type.clone(),
                     left: RValue::Literal(0),
                     right: RValue::VRegister(expr_id),
                     v_register: self.curr_id.next(),
@@ -399,29 +406,41 @@ impl<'a> IRParser<'a> {
                 self.type_lookup.add_type(self.curr_id, type_info);
             }
 
-            // OperatorTypes::Inc => Instruction::BinaryOp {
-            //     kind: BinaryKind::Add,
-            //     size: type_info.ir_type,
-            //     left: RValue::VRegister(expr_id),
-            //     right: RValue::Literal(1),
-            //     v_register: self.curr_id.next(),
-            // },
+            OperatorTypes::Inc | OperatorTypes::Dec => {
+                let add = Instruction::BinaryOp {
+                    kind: match operator {
+                        OperatorTypes::Inc => BinaryKind::Add,
+                        OperatorTypes::Dec => BinaryKind::Sub,
+                        _ => unreachable!(),
+                    },
+                    size: type_info.ir_type.clone(),
+                    left: RValue::VRegister(expr_id),
+                    right: RValue::Literal(1),
+                    v_register: self.curr_id.next(),
+                };
+                let store = Instruction::Store {
+                    size: type_info.ir_type.clone(),
+                    value: RValue::VRegister(self.curr_id),
+                    store_ptr: potential_var_address.unwrap(),
+                };
 
-            // OperatorTypes::Dec => Instruction::BinaryOp {
-            //     kind: BinaryKind::Sub,
-            //     size: type_info.ir_type,
-            //     left: RValue::VRegister(expr_id),
-            //     right: RValue::Literal(1),
-            //     v_register: self.curr_id.next(),
-            // },
+                added_instructions.push(add);
+                added_instructions.push(store);
 
-            // OperatorTypes::BitNot => Instruction::BinaryOp {
-            //     kind: BinaryKind::Xor,
-            //     size: type_info.ir_type,
-            //     left: RValue::VRegister(expr_id),
-            //     right: RValue::Literal(-1),
-            //     v_register: self.curr_id.next(),
-            // },
+                self.type_lookup.add_type(self.curr_id, type_info);
+            }
+
+            OperatorTypes::BitNot => {
+                added_instructions.push(Instruction::BinaryOp {
+                    kind: BinaryKind::Xor,
+                    size: type_info.ir_type.clone(),
+                    left: RValue::VRegister(expr_id),
+                    right: RValue::Literal(-1),
+                    v_register: self.curr_id.next(),
+                });
+
+                self.type_lookup.add_type(self.curr_id, type_info);
+            }
             _ => todo!(),
         };
 
@@ -465,15 +484,15 @@ impl<'a> IRParser<'a> {
             let v_register = self.emit_expr(arg, instructions);
             let ir_type = self.type_lookup.lookup_type(v_register);
 
-            ir_args.push((ir_type.ir_type, RValue::VRegister(v_register)));
+            ir_args.push((ir_type.ir_type.clone(), RValue::VRegister(v_register)));
         }
 
-        let return_type_info = lower_type(return_type);
+        let return_type_info = self.lower_type(return_type, instructions);
 
         let instruction = Instruction::Call {
             func_name: identifier.clone(),
             args: ir_args,
-            return_value: return_type_info.ir_type,
+            return_value: return_type_info.ir_type.clone(),
             v_register: if matches!(return_type_info.ir_type, IRType::Void) {
                 None
             } else {
@@ -507,7 +526,11 @@ impl<'a> IRParser<'a> {
         todo!()
     }
 
-    fn emit_expr(&mut self, expr: &ExprNode, instructions: &mut Vec<Instruction>) -> VRegisterID {
+    pub(super) fn emit_expr(
+        &mut self,
+        expr: &ExprNode,
+        instructions: &mut Vec<Instruction>,
+    ) -> VRegisterID {
         match expr {
             ExprNode::Binary { .. } => self.emit_binary_expr(expr, instructions),
             ExprNode::Integer { .. } | ExprNode::Float { .. } | ExprNode::Char { .. } => {
@@ -535,7 +558,7 @@ impl<'a> IRParser<'a> {
         let v_register = self.emit_expr(expr, instructions);
 
         instructions.push(Instruction::Return {
-            size: self.type_lookup.lookup_type(v_register).ir_type,
+            size: self.type_lookup.lookup_type(v_register).ir_type.clone(),
             value: RValue::VRegister(v_register),
         });
     }
@@ -551,7 +574,7 @@ impl<'a> IRParser<'a> {
         };
 
         let alloc_register;
-        let type_info = lower_type(var_type);
+        let type_info = self.lower_type(var_type, instructions);
 
         if let Some(expr) = r_value {
             let expression_register = self.emit_expr(expr, instructions);
@@ -559,7 +582,7 @@ impl<'a> IRParser<'a> {
             alloc_register = self.curr_id.next();
 
             instructions.push(Instruction::Alloca {
-                size: type_info.ir_type,
+                size: type_info.ir_type.clone(),
                 v_register: alloc_register,
             });
 

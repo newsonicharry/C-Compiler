@@ -1,14 +1,15 @@
-use crate::lexer::language_features::AssignmentTypes;
-use crate::lexer::language_features::KeywordTypes;
-use crate::lexer::language_features::OperatorTypes;
-use crate::lexer::lexer::TokenTypes;
-use crate::parser::nodes::GlobalNode;
-use crate::parser::parser::Parser;
-use crate::parser::tag_types::helper::TagKeywordUsage;
-use crate::parser::tag_types::helper::TagTypeData;
-use crate::parser::tag_types::helper::TagTypeKind;
-use crate::parser::tag_types::helper::TagTypeMember;
-use crate::semantics::semantics::SemanticInfo;
+use crate::{
+    lexer::{
+        language_features::{AssignmentTypes, KeywordTypes, OperatorTypes},
+        lexer::TokenTypes,
+    },
+    parser::{
+        nodes::GlobalNode,
+        parser::Parser,
+        tag_types::helper::{TagKeywordUsage, TagTypeData, TagTypeKind, TagTypeMember},
+    },
+    semantics::semantics::SemanticInfo,
+};
 
 impl Parser {
     fn parse_enum_members(&mut self) -> Result<Vec<TagTypeMember>, String> {

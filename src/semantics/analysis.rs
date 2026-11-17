@@ -176,7 +176,12 @@ impl<'a> SemanticAnalysis<'a> {
             _ => return Err(format!("Expected identifier type for function")),
         };
 
-        let TypeNode::Function { parameters, .. } = &**function_type else {
+        let TypeNode::Function {
+            parameters,
+            is_variadic,
+            ..
+        } = &**function_type
+        else {
             return Err(format!(
                 "Expected function call to {identifier} to be a function type"
             ));
@@ -199,7 +204,7 @@ impl<'a> SemanticAnalysis<'a> {
             }
         }
 
-        if args.len() != parameters.len() {
+        if args.len() != parameters.len() && !*is_variadic {
             return Err(format!("Unexpected number of argument"));
         }
 
@@ -363,6 +368,9 @@ impl<'a> SemanticAnalysis<'a> {
         let TypeNode::Variable { name, held_value } = var_type.clone() else {
             unreachable!();
         };
+
+        // todo: add an update type function
+        // println!("held value: {held_value}");
 
         // let TypeNode::Normal { held_type, .. } = &*held_value.clone() else {
         //     todo!()

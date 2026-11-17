@@ -1,10 +1,14 @@
-use crate::lexer::language_features::KeywordTypes;
-use crate::lexer::language_features::OperatorTypes;
-use crate::lexer::lexer::TokenTypes;
-use crate::parser::helper::is_expression;
-use crate::parser::helper::to_statement;
-use crate::parser::nodes::StatementNode;
-use crate::parser::parser::Parser;
+use crate::{
+    lexer::{
+        language_features::{KeywordTypes, OperatorTypes},
+        lexer::TokenTypes,
+    },
+    parser::{
+        helper::{is_expression, to_statement},
+        nodes::StatementNode,
+        parser::Parser,
+    },
+};
 
 impl Parser {
     pub fn parse_return(&mut self) -> Result<StatementNode, String> {

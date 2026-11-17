@@ -1,10 +1,14 @@
-use crate::lexer::language_features::KeywordTypes;
-use crate::lexer::language_features::OperatorTypes;
-use crate::lexer::lexer::TokenTypes;
-use crate::parser::expression_parser::ExprNode;
-use crate::parser::nodes::IndentDisplay;
-use crate::parser::nodes::StatementNode;
-use crate::parser::parser::Parser;
+use crate::{
+    lexer::{
+        language_features::{KeywordTypes, OperatorTypes},
+        lexer::TokenTypes,
+    },
+    parser::{
+        expression_parser::ExprNode,
+        nodes::{IndentDisplay, StatementNode},
+        parser::Parser,
+    },
+};
 
 #[derive(Clone)]
 pub enum IfStatement {

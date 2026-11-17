@@ -1,11 +1,12 @@
-use crate::lexer::language_features::KeywordTypes;
-use crate::lexer::lexer::TokenTypes;
-use crate::parser::nodes::GlobalNode;
-use crate::parser::parser::Parser;
-use crate::parser::tag_types::helper::TagKeywordUsage;
-use crate::parser::tag_types::helper::TagTypeKind;
-use crate::parser::tag_types::helper::TagTypeMember;
-use crate::semantics::semantics::SemanticInfo;
+use crate::{
+    lexer::{language_features::KeywordTypes, lexer::TokenTypes},
+    parser::{
+        nodes::GlobalNode,
+        parser::Parser,
+        tag_types::helper::{TagKeywordUsage, TagTypeKind, TagTypeMember},
+    },
+    semantics::semantics::SemanticInfo,
+};
 
 impl Parser {
     pub fn parse_union_keyword(&mut self) -> Result<Vec<GlobalNode>, String> {

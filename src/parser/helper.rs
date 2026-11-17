@@ -1,8 +1,14 @@
-use crate::lexer::language_features::{KeywordTypes, OperatorTypes};
-use crate::lexer::lexer::{Lexer, TokenTypes};
-use crate::parser::nodes::{GlobalNode, StatementNode};
-use crate::parser::parser::Parser;
-use crate::semantics::semantics::Semantics;
+use crate::{
+    lexer::{
+        language_features::{KeywordTypes, OperatorTypes},
+        lexer::{Lexer, TokenTypes},
+    },
+    parser::{
+        nodes::{GlobalNode, StatementNode},
+        parser::Parser,
+    },
+    semantics::semantics::Semantics,
+};
 use std::fmt::Display;
 
 pub fn pretty_clean_string(string: &str) -> String {

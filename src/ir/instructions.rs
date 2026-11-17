@@ -1,31 +1,38 @@
-use std::fmt::Display;
+use std::{collections::HashMap, fmt::Display};
 
 use crate::{parser::simple_type::Signedness, semantics::semantics::SymbolID};
 
 pub(super) struct Program(pub Vec<Module>);
 
-#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) struct VRegisterID(pub u64);
+macro_rules! createId {
+    ($name: tt) => {
+        #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+        pub(super) struct $name(pub u64);
 
-impl Display for VRegisterID {
-    fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(display, "{}", self.0)
-    }
+        impl Display for $name {
+            fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(display, "{}", self.0)
+            }
+        }
+
+        impl $name {
+            pub fn next(&mut self) -> Self {
+                // let temp = *self;
+                self.0 += 1;
+                *self
+            }
+
+            pub fn prev(&self) -> Self {
+                Self(self.0 - 1)
+            }
+        }
+    };
 }
 
-impl VRegisterID {
-    pub fn next(&mut self) -> VRegisterID {
-        // let temp = *self;
-        self.0 += 1;
-        *self
-    }
+createId!(VRegisterID);
+createId!(GlobalValueID);
 
-    pub fn prev(&self) -> VRegisterID {
-        VRegisterID(self.0 - 1)
-    }
-}
-
-#[derive(Clone, Copy, Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub(super) enum IRType {
     I1,
     I8,
@@ -38,6 +45,10 @@ pub(super) enum IRType {
     X86Fp80,
     Ptr,
     Void,
+    Arr {
+        num_elements: RValue,
+        arr_type: Box<IRType>,
+    },
 }
 
 impl IRType {
@@ -53,6 +64,7 @@ impl IRType {
             Self::X86Fp80 => 128,
             Self::Ptr => 64,
             Self::Void => 0,
+            Self::Arr { arr_type, .. } => arr_type.num_bits(),
         }
     }
 
@@ -70,24 +82,35 @@ impl IRType {
 
 impl Display for IRType {
     fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let output = match self {
-            Self::I1 => "i1",
-            Self::I8 => "i8",
-            Self::I16 => "i16",
-            Self::I32 => "i32",
-            Self::I64 => "i64",
-            Self::Float => "float",
-            Self::Double => "double",
-            Self::X86Fp80 => "x86_fp80",
-            Self::Ptr => "ptr",
-            Self::Void => "void",
-        };
+        fn get_name(ir_type: &IRType) -> String {
+            match ir_type {
+                IRType::I1 => "i1".to_string(),
+                IRType::I8 => "i8".to_string(),
+                IRType::I16 => "i16".to_string(),
+                IRType::I32 => "i32".to_string(),
+                IRType::I64 => "i64".to_string(),
+                IRType::Float => "float".to_string(),
+                IRType::Double => "double".to_string(),
+                IRType::X86Fp80 => "x86_fp80".to_string(),
+                IRType::Ptr => "ptr".to_string(),
+                IRType::Void => "void".to_string(),
+                IRType::Arr {
+                    num_elements,
+                    arr_type,
+                } => {
+                    if matches!(num_elements, RValue::Literal(..)) {
+                        return format!("[{num_elements} x {}]", get_name(arr_type));
+                    }
 
-        write!(display, "{output}")
+                    todo!()
+                }
+            }
+        }
+        write!(display, "{}", get_name(self))
     }
 }
 
-#[derive(Default, Clone, Copy, Debug)]
+#[derive(Default, Clone, Debug)]
 pub(super) struct SignedIRType {
     pub ir_type: IRType,
     pub signedness: Signedness,
@@ -102,10 +125,11 @@ pub(super) enum Module {
     },
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(super) enum RValue {
     VRegister(VRegisterID),
     Literal(i64),
+    GlobalValue(GlobalValueID),
     Void,
 }
 
@@ -113,6 +137,7 @@ impl Display for RValue {
     fn fmt(&self, display: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let output = match self {
             Self::VRegister(id) => format!("%{}", id.0),
+            Self::GlobalValue(id) => format!("@{}", id.0),
             Self::Literal(value) => value.to_string(),
             Self::Void => String::new(),
         };
@@ -358,4 +383,9 @@ impl VRegisterTypeLookup {
     pub fn lookup_type(&mut self, v_register: VRegisterID) -> &SignedIRType {
         &self.lookup[v_register.0 as usize]
     }
+}
+
+#[derive(Default)]
+pub(super) struct StringPtrLookup {
+    lookup: HashMap<String, (GlobalValueID)>,
 }

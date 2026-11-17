@@ -1,7 +1,8 @@
-use std::fmt::Display;
-use std::iter::Peekable;
-use std::str::Chars;
-use std::str::FromStr;
+use std::{
+    fmt::Display,
+    iter::Peekable,
+    str::{Chars, FromStr},
+};
 
 #[derive(Debug, PartialEq, Clone, Eq)]
 pub struct CharList(pub Vec<CharType>);

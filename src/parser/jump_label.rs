@@ -1,10 +1,13 @@
-use crate::lexer::language_features::KeywordTypes;
-use crate::lexer::language_features::OperatorTypes;
-use crate::lexer::lexer::TokenTypes;
-use crate::parser::expression_parser::ExprNode;
-use crate::parser::helper::pretty_clean_string;
-use crate::parser::nodes::StatementNode;
-use crate::parser::parser::Parser;
+use crate::{
+    lexer::{
+        language_features::{KeywordTypes, OperatorTypes},
+        lexer::TokenTypes,
+    },
+    parser::{
+        expression_parser::ExprNode, helper::pretty_clean_string, nodes::StatementNode,
+        parser::Parser,
+    },
+};
 use std::fmt::Display;
 
 #[derive(Clone, Debug, PartialEq)]

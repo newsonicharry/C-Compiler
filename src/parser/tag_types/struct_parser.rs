@@ -1,11 +1,15 @@
-use crate::lexer::language_features::OperatorTypes;
-use crate::lexer::language_features::{KeywordTypes, LiteralTypes};
-use crate::lexer::lexer::TokenTypes;
-use crate::parser::nodes::GlobalNode;
-use crate::parser::parser::Parser;
-use crate::parser::tag_types::helper::TagTypeKind;
-use crate::parser::tag_types::helper::{TagKeywordUsage, TagTypeMember};
-use crate::semantics::semantics::SemanticInfo;
+use crate::{
+    lexer::{
+        language_features::{KeywordTypes, LiteralTypes, OperatorTypes},
+        lexer::TokenTypes,
+    },
+    parser::{
+        nodes::GlobalNode,
+        parser::Parser,
+        tag_types::helper::{TagKeywordUsage, TagTypeKind, TagTypeMember},
+    },
+    semantics::semantics::SemanticInfo,
+};
 
 impl Parser {
     /// Parses anything that uses a struct keyword

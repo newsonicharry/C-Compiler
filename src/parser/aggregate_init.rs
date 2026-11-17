@@ -1,12 +1,14 @@
-use crate::lexer::escape_sequences::CharType;
-use crate::lexer::language_features::AssignmentTypes;
-use crate::lexer::language_features::LiteralTypes;
-use crate::lexer::language_features::OperatorTypes;
-use crate::lexer::lexer::TokenTypes;
-use crate::parser::expression_parser::ExprNode;
-use crate::parser::helper::pretty_clean_string;
-use crate::parser::nodes::IndentDisplay;
-use crate::parser::parser::Parser;
+use crate::{
+    lexer::{
+        escape_sequences::CharType,
+        language_features::{AssignmentTypes, LiteralTypes, OperatorTypes},
+        lexer::TokenTypes,
+    },
+    parser::{
+        expression_parser::ExprNode, helper::pretty_clean_string, nodes::IndentDisplay,
+        parser::Parser,
+    },
+};
 use std::fmt::Display;
 
 #[derive(Debug, Clone, PartialEq)]

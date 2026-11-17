@@ -4,6 +4,7 @@ use crate::{
         VRegisterIdentifierLookup, VRegisterTypeLookup,
     },
     parser::{
+        expression_parser::ExprNode,
         nodes::{
             AST,
             GlobalNode::{self},
@@ -21,6 +22,7 @@ pub struct IRParser<'a> {
     pub(super) curr_id: VRegisterID,
     pub(super) identifier_lookup: VRegisterIdentifierLookup,
     pub(super) type_lookup: VRegisterTypeLookup,
+    // str_container:
 }
 
 impl<'a> IRParser<'a> {
@@ -110,12 +112,19 @@ impl<'a> IRParser<'a> {
             unreachable!()
         };
 
+        let mut body_instructions = Vec::new();
+
         if body.is_none() {
             let func_dec = Module::FunctionDef {
-                return_type: lower_type(return_type).ir_type,
+                // this takes an instructions as if it could emit something
+                // but for a function return type this would be illegal
+                return_type: self.lower_type(return_type, &mut body_instructions).ir_type,
                 name: name.clone(),
                 instructions: None,
-                params: parameters.iter().map(|x| lower_type(&x.0)).collect(),
+                params: parameters
+                    .iter()
+                    .map(|x| self.lower_type(&x.0, &mut body_instructions))
+                    .collect(),
             };
 
             self.program.0.push(func_dec);
@@ -127,22 +136,20 @@ impl<'a> IRParser<'a> {
         let mut params = Vec::new();
         for (parameter, _) in parameters {
             self.curr_id.next();
-            let type_info = lower_type(parameter);
-            params.push(type_info);
+            let type_info = self.lower_type(parameter, &mut body_instructions);
+            params.push(type_info.clone());
             self.type_lookup.add_type(self.curr_id, type_info);
         }
-
-        let mut body_instructions = Vec::new();
 
         for (id, (param, (_, semantic_info))) in params.iter().zip(parameters.iter()).enumerate() {
             let param_v_register = VRegisterID(id as u64 + 1);
             let alloc = Instruction::Alloca {
-                size: param.ir_type,
+                size: param.ir_type.clone(),
                 v_register: self.curr_id.next(),
             };
 
             let store = Instruction::Store {
-                size: param.ir_type,
+                size: param.ir_type.clone(),
                 value: RValue::VRegister(param_v_register),
                 store_ptr: self.curr_id,
             };
@@ -165,7 +172,7 @@ impl<'a> IRParser<'a> {
         self.emit_statement_node(statements, &mut body_instructions);
 
         let func_def = Module::FunctionDef {
-            return_type: lower_type(return_type).ir_type,
+            return_type: self.lower_type(return_type, &mut body_instructions).ir_type,
             name: name.clone(),
             instructions: Some(body_instructions),
             params,
@@ -173,32 +180,50 @@ impl<'a> IRParser<'a> {
 
         self.program.0.push(func_def);
     }
-}
 
-pub(super) fn lower_type(type_node: &TypeNode) -> SignedIRType {
-    let create = |ir_type: IRType, signedness: Signedness| SignedIRType {
-        ir_type,
-        signedness,
-    };
+    pub(super) fn lower_type(
+        &mut self,
+        type_node: &TypeNode,
+        instructions: &mut Vec<Instruction>,
+    ) -> SignedIRType {
+        let create = |ir_type: IRType, signedness: Signedness| SignedIRType {
+            ir_type,
+            signedness,
+        };
 
-    match type_node {
-        TypeNode::Variable { held_value, .. } => lower_type(held_value),
-        TypeNode::Pointer { .. } => create(IRType::Ptr, Signedness::NoSign),
-        TypeNode::Normal { held_type, .. } => match held_type.base_type.unwrap() {
-            BaseType::_Bool => create(IRType::I1, held_type.signedness),
-            BaseType::Char => create(IRType::I8, held_type.signedness),
-            BaseType::Short => create(IRType::I16, held_type.signedness),
-            BaseType::Int => create(IRType::I32, held_type.signedness),
-            BaseType::Long => create(IRType::I64, held_type.signedness),
+        match type_node {
+            TypeNode::Variable { held_value, .. } => self.lower_type(held_value, instructions),
+            TypeNode::Pointer { .. } => create(IRType::Ptr, Signedness::NoSign),
+            TypeNode::Normal { held_type, .. } => match held_type.base_type.unwrap() {
+                BaseType::_Bool => create(IRType::I1, held_type.signedness),
+                BaseType::Char => create(IRType::I8, held_type.signedness),
+                BaseType::Short => create(IRType::I16, held_type.signedness),
+                BaseType::Int => create(IRType::I32, held_type.signedness),
+                BaseType::Long => create(IRType::I64, held_type.signedness),
 
-            BaseType::Float => create(IRType::Float, Signedness::NoSign),
-            BaseType::Double => create(IRType::Double, Signedness::NoSign),
-            BaseType::LongDouble => create(IRType::X86Fp80, Signedness::NoSign),
+                BaseType::Float => create(IRType::Float, Signedness::NoSign),
+                BaseType::Double => create(IRType::Double, Signedness::NoSign),
+                BaseType::LongDouble => create(IRType::X86Fp80, Signedness::NoSign),
 
-            BaseType::Void => create(IRType::Void, Signedness::Unsigned),
-        },
+                BaseType::Void => create(IRType::Void, Signedness::Unsigned),
+            },
+            TypeNode::Array { expr, held_value } => {
+                let num_elements = match expr {
+                    ExprNode::Integer { num } => RValue::Literal(num.value as i64),
+                    _ => RValue::VRegister(self.emit_expr(expr, instructions)),
+                };
 
-        // TypeNode::Array { .. } => IRType::Ptr,
-        _ => todo!(),
+                create(
+                    IRType::Arr {
+                        num_elements,
+                        arr_type: Box::new(self.lower_type(held_value, instructions).ir_type),
+                    },
+                    Signedness::NoSign,
+                )
+            }
+
+            // TypeNode::Array { .. } => IRType::Ptr,
+            _ => todo!(),
+        }
     }
 }

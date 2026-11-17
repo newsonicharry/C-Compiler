@@ -272,7 +272,6 @@ impl Semantics {
         };
 
         let symbol_id = self.symbols.next_symbol_id();
-        // let name = self.get_name_from_type_value(type_value);
 
         self.curr_scope()
             .add_identifier(&namespace, &name, symbol_id)?;
